@@ -1,0 +1,5 @@
+risk_model:
+  stop_loss: 0.02
+  trailing_stop: 0.025
+  max_leverage: 4
+  volatility_window: 21

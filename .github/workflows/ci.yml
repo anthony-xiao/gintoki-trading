@@ -1,0 +1,16 @@
+name: CI Pipeline
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - run: npm install
+      - run: npm test
+      
+      - uses: actions/setup-python@v4
+      - run: pip install -r requirements.txt
+      - run: pytest tests/py/

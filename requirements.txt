@@ -1,0 +1,14 @@
+pandas==2.1.4
+python-socketio==5.11.2
+qiskit-finance==0.4.1
+ml_dtypes>=0.3.1
+protobuf>=5.29.1,<6
+tensorstore>=0.1.71
+tensorflow>=2.15.0
+shap>=0.45.0
+numpy>=1.26.0
+requests>=2.31.0
+python-dateutil>=2.8.0
+pytz>=2023.3
+python-dotenv>=1.0.0
+pyarrow>=14.0.0

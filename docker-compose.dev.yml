@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  data-ingestor:
+    build: .
+    environment:
+      - NODE_ENV=development
+    volumes:
+      - ./src/js:/app/src/js
+      - ./data:/app/data
+
+  ml-trainer:
+    image: python:3.11-slim
+    volumes:
+      - ./src/py:/app/py
+      - ./data:/app/data
+    command: watchmedo auto-restart --pattern="*.py" --recursive -- python -m ml_core.training.train

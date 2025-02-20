@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  data-ingestor:
+    build: .
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./src:/app/src
+    command: node --experimental-import-meta-resolve src/js/core/services/data/polygon-realtime.mjs
+
+  ml-trainer:
+    image: python:3.11-slim
+    volumes:
+      - ./src/py:/app/py
+      - ./data:/app/data
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+    command: python -m ml_core.training.trainer
+
+  historical-fetcher:
+    build: .
+    environment:
+      - PYTHONPATH=/app/src/py
+    command: >
+      bash -c "python -m data_ingestion.historical_data_fetcher $$@"
+    volumes:
+      - ./src/py:/app/src/py
+      - ./data:/app/data
+      

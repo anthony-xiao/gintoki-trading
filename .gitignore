@@ -1,3 +1,16 @@
+.env
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+data/
+models/
+EOF
+
+*.json
+!s3-policy.json
+!cors.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

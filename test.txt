@@ -1,0 +1,5 @@
+integration test for data-ingetsion
+
+docker compose run --rm historical-fetcher python -m src.py.data_ingestion.historical_data_fetcher tickers AAPL --start 2020-01-01 --end 2020-01-02
+
+check if historical fether is meant to ship data to s3
