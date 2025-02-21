@@ -1,11 +1,10 @@
 import { PolygonRealtime } from '../../src/js/core/services/data/polygon-realtime.mjs';
-import { strict as assert } from 'node:assert';
 import { S3Client } from '@aws-sdk/client-s3';
 
 const TEST_SYMBOL = 'AAPL';
-const TEST_DURATION = 5000; // 5 seconds
+const TEST_DURATION = 30000; // 30 seconds
 
-export async function testDataPipeline() {
+export async function testRealTimePipeline() {
   const s3 = new S3Client({ region: 'us-west-2' });
   const ingestor = new PolygonRealtime();
   
@@ -13,7 +12,7 @@ export async function testDataPipeline() {
     // Start ingestion
     ingestor.subscribe([TEST_SYMBOL]);
     
-    // Wait for data flow
+    // Let data accumulate
     await new Promise(r => setTimeout(r, TEST_DURATION));
     
     // Verify S3 writes
@@ -22,16 +21,10 @@ export async function testDataPipeline() {
       Prefix: `processed/ticks/${TEST_SYMBOL}`
     });
     
-    assert.ok(objects.Contents.length > 0, 
-      'No data written to S3');
+    assert.ok(objects.Contents.length > 0, 'No data written to S3');
     console.log('✅ Data pipeline test passed');
 
   } finally {
-    ingestor.ws.close();
+    ingestor.disconnect();
   }
-}
-
-// Run test if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  await testDataPipeline();
 }

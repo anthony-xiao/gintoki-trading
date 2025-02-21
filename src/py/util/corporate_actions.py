@@ -6,7 +6,7 @@ from typing import Dict, List
 import logging
 
 # Shared utilities
-from src.py.utils.api_client import fetch_paginated_data
+from src.py.util.api_client import fetch_paginated_data
 
 # Constants
 load_dotenv()

@@ -40,7 +40,7 @@ from botocore.exceptions import ClientError
 
 
 # Local imports moved to function scope to prevent circular dependencies
-from src.py.utils.api_client import fetch_paginated_data  # New shared module
+from src.py.util.api_client import fetch_paginated_data  # New shared module
 
 # Configure logging
 load_dotenv()
@@ -291,7 +291,7 @@ def initialize_trading_days():
 def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str]:
     """Main fetch function with deferred corporate actions import"""
     # Deferred import breaks circular dependency
-    from src.py.utils.corporate_actions import corporate_actions_manager
+    from src.py.util.corporate_actions import corporate_actions_manager
     """Fetch all data for a ticker."""
     os.makedirs(f"data/historical/{ticker}", exist_ok=True)
     results = {}
@@ -365,7 +365,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
 
 if __name__ == "__main__":
     import argparse
-    from src.py.utils.corporate_actions import corporate_actions_manager  # Absolute import
+    from src.py.util.corporate_actions import corporate_actions_manager  # Absolute import
 
     parser = argparse.ArgumentParser(
         description="Fetch Polygon.io historical data",
