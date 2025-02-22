@@ -35,6 +35,9 @@ class TradingModel:
     def explain(self, X):
         explainer = shap.DeepExplainer(self.model, X)
         return explainer.shap_values(X)
+    
+    def filter_incomplete_samples(dataset):
+        return dataset.dropna(subset=['rsi', 'obv'])
 
 if __name__ == '__main__':
     model = TradingModel()
