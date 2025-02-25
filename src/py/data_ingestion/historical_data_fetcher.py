@@ -63,41 +63,43 @@ def is_trading_day(date: datetime) -> bool:
 def fetch_aggregates(ticker: str, start: datetime, end: datetime, 
                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
     """Fetch OHLCV + VWAP data"""
-    # url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
-    # params = {"adjusted": "true", "sort": "asc", "limit": 50000}
-    # logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
+    url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
+    params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+    logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
 
-    # data = fetch_paginated_data(url, params)
+    data = fetch_paginated_data(url, params)
 
     # new code for monthly batches
 
-    """Fetch OHLCV + VWAP data with monthly batches"""
-    all_data = []
+    # """Fetch OHLCV + VWAP data with monthly batches"""
+    # all_data = []
     
-    # Split into monthly batches
-    current_start = start
-    while current_start < end:
-        batch_end = min(
-            current_start + timedelta(days=30),  # ~1 month
-            end
-        )
+    # # Split into monthly batches
+    # current_start = start
+    # while current_start < end:
+    #     batch_end = min(
+    #         current_start + timedelta(days=30),  # ~1 month
+    #         end
+    #     )
         
-        url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/" \
-              f"{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
-        params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+    #     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/" \
+    #           f"{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
+    #     params = {"adjusted": "true", "sort": "asc", "limit": 50000}
         
-        logging.info(f"Fetching {current_start.date()} to {batch_end.date()} for {ticker}")
-        batch_data = fetch_paginated_data(url, params)
-        all_data.extend(batch_data)
-        
-        current_start = batch_end + timedelta(days=1)
+    #     logging.info(f"Fetching {current_start.date()} to {batch_end.date()} for {ticker}")
+    #     batch_data = fetch_paginated_data(url, params)
 
-    # new code for monthly batches ends 
+        
+    #     all_data.extend(batch_data)
+        
+    #     current_start = batch_end + timedelta(days=1)
 
-    if not all_data:
+    # # new code for monthly batches ends 
+
+    if not data:
         return pd.DataFrame()
     
-    df = pd.DataFrame(all_data).rename(columns={
+    df = pd.DataFrame(data).rename(columns={
         "t": "timestamp", "o": "open", "h": "high", "n":"transactions",
         "l": "low", "c": "close", "v": "volume", "vw": "vwap"
     })
@@ -443,7 +445,7 @@ if __name__ == "__main__":
     def process_ticker(ticker: str):
         """Wrapper function for error handling"""
         try:
-            logging.info(f"v2 🚀 Starting data collection for {ticker}")
+            logging.info(f"v3 🚀 Starting data collection for {ticker}")
             start_time = time.time()
             
             result = fetch_all_data(ticker, args.start, args.end)
