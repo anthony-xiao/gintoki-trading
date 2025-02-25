@@ -355,8 +355,8 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                     if upload_parquet_to_s3(trades, os.getenv('AWS_S3_BUCKET'), s3_trade_path):
                         results.setdefault("trades", []).append(s3_trade_path)
                         logging.info(f"Uploaded trades for {ticker} on {date_str} to s3://{os.getenv('AWS_S3_BUCKET')}/{s3_trade_path}")
-                        del trades  # Explicit deletion
-                        gc.collect()  # Force garbage collection
+                        # del trades  # Explicit deletion
+                        # gc.collect()  # Force garbage collection
 
                 if not quotes.empty:
                     # Local save (optional)
@@ -368,8 +368,8 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                     if upload_parquet_to_s3(quotes, os.getenv('AWS_S3_BUCKET'), s3_quote_path):
                         results.setdefault("quotes", []).append(s3_quote_path)
                         logging.info(f"Uploaded quotes for {ticker} on {date_str} to s3://{os.getenv('AWS_S3_BUCKET')}/{s3_quote_path}")
-                        del quotes  # Explicit deletion
-                        gc.collect()  # Force garbage collection
+                        # del quotes  # Explicit deletion
+                        # gc.collect()  # Force garbage collection
 
     except Exception as e:
         logging.error(f"Critical error processing {ticker}: {str(e)}")
