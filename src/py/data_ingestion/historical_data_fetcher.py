@@ -39,6 +39,7 @@ s3 = boto3.client(
 
 def upload_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str) -> bool:
     """Upload DataFrame to S3 as Parquet"""
+    logging.info(f"upload parquet {bucket},{key}")
     try:
         buffer = BytesIO()
         df.to_parquet(buffer, engine='pyarrow', compression='snappy')
@@ -365,7 +366,6 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                 datetime.strptime(end_date, "%Y-%m-%d"),
                 res[1], res[0]
             )
-            logging.info(f"fetch aggregate start {df}")
             
             if not df.empty:
                 # Local save (optional)
@@ -374,7 +374,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                 
                 # S3 Upload
                 s3_path = f"historical/{ticker or 'unknown'}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
-                logging.info(f"start upload aggregate {s3_path}")
+                logging.info(f"start upload aggregate {os.getenv('AWS_S3_BUCKET')}, {s3_path}")
                 # s3_path = f"historical/{ticker}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
                 if upload_parquet_to_s3(df, os.getenv('AWS_S3_BUCKET'), s3_path):
                     results[f"aggregates_{res[0]}"] = s3_path
