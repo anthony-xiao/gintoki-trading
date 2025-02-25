@@ -443,7 +443,7 @@ if __name__ == "__main__":
     def process_ticker(ticker: str):
         """Wrapper function for error handling"""
         try:
-            logging.info(f"🚀 Starting data collection for {ticker}")
+            logging.info(f"v2 🚀 Starting data collection for {ticker}")
             start_time = time.time()
             
             result = fetch_all_data(ticker, args.start, args.end)
