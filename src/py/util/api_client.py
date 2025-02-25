@@ -10,6 +10,7 @@ import time
 load_dotenv()
 POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
 BASE_URL = "https://api.polygon.io"
+MAX_RECORDS_PER_QUERY = 50000  # For aggregates/trades/quotes
 
     # Existing fetch_paginated_data implementation
 
@@ -20,7 +21,8 @@ def fetch_paginated_data(url: str, params: Dict = None) -> List[Dict]:
     retries = 0
     max_retries = 3
     timeout = 10
-    max_pages = 20  # Safety net to prevent infinite loops
+    max_pages = 1000  # Safety net to prevent infinite loops
+    total_records = 0
     pages_fetched = 0
     seen_cursors = set()
     original_params = params.copy() if params else {}
@@ -28,6 +30,11 @@ def fetch_paginated_data(url: str, params: Dict = None) -> List[Dict]:
     logging.info(f"Starting pagination for {next_url}")
     
     while next_url and pages_fetched < max_pages:
+        # new code added
+        if total_records >= MAX_RECORDS_PER_QUERY:
+            logging.warning(f"Reached max records limit {MAX_RECORDS_PER_QUERY}")
+            break
+        
         try:
             parsed = urlparse(next_url)
             query = parse_qs(parsed.query)

@@ -29,32 +29,76 @@ class corporate_actions_manager:
     def _fetch_splits(self, symbols: List[str], start_date: str, end_date: str):
         """Fetch stock splits"""
         url = f"{BASE_URL}/v3/reference/splits"
-        params = {
-            'ticker.in': ','.join(symbols),
-            'execution_date.gte': start_date,
-            'execution_date.lte': end_date,
-            'limit': 1000
-        }
+        start_year = int(start_date[:4])
+        end_year = int(end_date[:4])
+        all_splits = []
+
+        # New code 
+        for year in range(start_year, end_year+1):
+            year_start = max(start_date, f"{year}-01-01")
+            year_end = min(end_date, f"{year}-12-31")
         
-        data = fetch_paginated_data(url, params)
-        if data:
-            self.splits = pd.DataFrame(data)[['ticker', 'execution_date', 'split_from', 'split_to']]
+        # Old code
+            params = {
+                'ticker.in': ','.join(symbols),
+                'execution_date.gte': start_date,
+                'execution_date.lte': end_date,
+                'limit': 1000
+            }
+        # new code
+            logging.info(f"Fetching splits {year_start} to {year_end}")
+            data = fetch_paginated_data(url, params)
+            all_splits.extend(data)
+        
+        # data = fetch_paginated_data(url, params)
+
+        if all_splits:
+            self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
             self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
+        else:
+            self.splits = pd.DataFrame()
+            logging.info("No splits data found")
+
+        # old code
+        # if data:
+        #     self.splits = pd.DataFrame(data)[['ticker', 'execution_date', 'split_from', 'split_to']]
+        #     self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
 
     def _fetch_dividends(self, symbols: List[str], start_date: str, end_date: str):
         """Fetch dividends"""
         url = f"{BASE_URL}/v3/reference/dividends"
-        params = {
-            'ticker.in': ','.join(symbols),
-            'ex_dividend_date.gte': start_date,
-            'ex_dividend_date.lte': end_date,
-            'limit': 1000
-        }
+
+        start_year = int(start_date[:4])
+        end_year = int(end_date[:4])
+        all_dividends = []
+
+        for year in range(start_year, end_year+1):
+            year_start = max(start_date, f"{year}-01-01")
+            year_end = min(end_date, f"{year}-12-31")
         
-        data = fetch_paginated_data(url, params)
-        if data:
+    
+            params = {
+                'ticker.in': ','.join(symbols),
+                'ex_dividend_date.gte': start_date,
+                'ex_dividend_date.lte': end_date,
+                'limit': 1000
+            }
+
+            logging.info(f"Fetching dividends {year_start} to {year_end}")
+            data = fetch_paginated_data(url, params)
+            all_dividends.extend(data)
+        
+        if all_dividends:
             self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
             self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+        else:
+            self.dividends = pd.DataFrame()
+            logging.info("No dividends data found")
+        
+        # data = fetch_paginated_data(url, params)
+        # if data:
+        #     self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
+        #     self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
 
     def _create_adjustment_maps(self):
         """Create adjustment lookup structures"""
@@ -92,6 +136,23 @@ class corporate_actions_manager:
                 adjusted.loc[mask, ['open', 'high', 'low', 'close']] -= amount
                 
         return adjusted
+    
+    def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start_date: str, end_date: str):
+        """Upload splits and dividends to S3"""
+        from src.py.data_ingestion.historical_data_fetcher import upload_parquet_to_s3  # Late import
+        
+        # Upload splits
+        if not self.splits.empty:
+            splits_key = f"historical/{ticker}/corporate_actions/splits/{start_date}_to_{end_date}.parquet"
+            if upload_parquet_to_s3(self.splits, bucket, splits_key):
+                logging.info(f"Uploaded splits to s3://{bucket}/{splits_key}")
+        
+        # Upload dividends
+        if not self.dividends.empty:
+            dividends_key = f"historical/{ticker}/corporate_actions/dividends/{start_date}_to_{end_date}.parquet"
+            if upload_parquet_to_s3(self.dividends, bucket, dividends_key):
+                logging.info(f"Uploaded dividends to s3://{bucket}/{dividends_key}")
+
 
 # Singleton instance
 corporate_actions_manager = corporate_actions_manager()

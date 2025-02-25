@@ -1,30 +1,3 @@
-"""
-Polygon.io Historical Data Fetcher
-
-Purpose:
-- Collects 20+ years of multi-resolution market data for model training
-- Aggregates multiple data types into structured format
-- Handles Polygon's pagination and rate limits
-- Stores data in efficient Parquet format
-
-Data Collected:
-1. Minute/Second Aggregates (OHLCV + VWAP)
-2. Trades/Quotes Tick Data
-3. Corporate Actions (Splits/Dividends)
-4. Fundamental Data
-5. Reference Data
-6. Technical Indicators
-"""
-"""
-Polygon.io Historical Data Fetcher (Corrected)
-"""
-"""
-Polygon.io Historical Data Fetcher
-- Aggregates (OHLCV + VWAP)
-- Trades and Quotes
-- Corporate Actions (Splits and Dividends)
-"""
-
 import os
 from dotenv import load_dotenv
 import requests
@@ -37,6 +10,8 @@ from typing import Dict, List
 import boto3
 from io import BytesIO
 from botocore.exceptions import ClientError
+import gc
+
 
 
 # Local imports moved to function scope to prevent circular dependencies
@@ -88,15 +63,41 @@ def is_trading_day(date: datetime) -> bool:
 def fetch_aggregates(ticker: str, start: datetime, end: datetime, 
                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
     """Fetch OHLCV + VWAP data"""
-    url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
-    params = {"adjusted": "true", "sort": "asc", "limit": 50000}
-    logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
+    # url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
+    # params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+    # logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
 
-    data = fetch_paginated_data(url, params)
-    if not data:
+    # data = fetch_paginated_data(url, params)
+
+    # new code for monthly batches
+
+    """Fetch OHLCV + VWAP data with monthly batches"""
+    all_data = []
+    
+    # Split into monthly batches
+    current_start = start
+    while current_start < end:
+        batch_end = min(
+            current_start + timedelta(days=30),  # ~1 month
+            end
+        )
+        
+        url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/" \
+              f"{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
+        params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+        
+        logging.info(f"Fetching {current_start.date()} to {batch_end.date()} for {ticker}")
+        batch_data = fetch_paginated_data(url, params)
+        all_data.extend(batch_data)
+        
+        current_start = batch_end + timedelta(days=1)
+
+    # new code for monthly batches ends 
+
+    if not all_data:
         return pd.DataFrame()
     
-    df = pd.DataFrame(data).rename(columns={
+    df = pd.DataFrame(all_data).rename(columns={
         "t": "timestamp", "o": "open", "h": "high", "n":"transactions",
         "l": "low", "c": "close", "v": "volume", "vw": "vwap"
     })
@@ -169,7 +170,7 @@ def fetch_trades(ticker: str, date: str) -> pd.DataFrame:
         params = {
             "timestamp.gte": f"{date}T00:00:00.000Z",
             "timestamp.lte": f"{date}T23:59:59.999Z",
-            "limit": 1000,
+            "limit": 50000,
             "sort": "timestamp",
             "order": "asc"
         }
@@ -215,7 +216,7 @@ def fetch_quotes(ticker: str, date: str) -> pd.DataFrame:
         params = {
             "timestamp.gte": f"{date}T00:00:00.000Z",
             "timestamp.lte": f"{date}T23:59:59.999Z",
-            "limit": 1000,
+            "limit": 50000,
             "sort": "timestamp",
             "order": "asc"
         }
@@ -301,6 +302,14 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
         ca_manager = corporate_actions_manager
         ca_manager.fetch_corporate_actions([ticker], start_date, end_date)
 
+        # Add corporate actions upload
+        ca_manager.upload_corporate_actions_to_s3(
+            os.getenv('AWS_S3_BUCKET'), 
+            ticker,
+            start_date,
+            end_date
+    )
+
         # Aggregates collection
         for res in [("minute", 1), ("day", 1)]:
             df = fetch_aggregates(
@@ -346,6 +355,8 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                     if upload_parquet_to_s3(trades, os.getenv('AWS_S3_BUCKET'), s3_trade_path):
                         results.setdefault("trades", []).append(s3_trade_path)
                         logging.info(f"Uploaded trades for {ticker} on {date_str} to s3://{os.getenv('AWS_S3_BUCKET')}/{s3_trade_path}")
+                        del trades  # Explicit deletion
+                        gc.collect()  # Force garbage collection
 
                 if not quotes.empty:
                     # Local save (optional)
@@ -357,6 +368,8 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                     if upload_parquet_to_s3(quotes, os.getenv('AWS_S3_BUCKET'), s3_quote_path):
                         results.setdefault("quotes", []).append(s3_quote_path)
                         logging.info(f"Uploaded quotes for {ticker} on {date_str} to s3://{os.getenv('AWS_S3_BUCKET')}/{s3_quote_path}")
+                        del quotes  # Explicit deletion
+                        gc.collect()  # Force garbage collection
 
     except Exception as e:
         logging.error(f"Critical error processing {ticker}: {str(e)}")
@@ -368,6 +381,7 @@ if __name__ == "__main__":
     from src.py.util.corporate_actions import corporate_actions_manager  # Absolute import
 
     parser = argparse.ArgumentParser(
+        prog='historical_data_fetcher.py',
         description="Fetch Polygon.io historical data",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
@@ -378,7 +392,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "tickers",
-        nargs="*",
+        nargs="+",
         help="Space-separated list of stock tickers (e.g. AAPL MSFT)"
     )
     parser.add_argument(

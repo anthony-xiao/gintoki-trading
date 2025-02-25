@@ -1,0 +1,27 @@
+integration test for data-ingetsion
+
+docker compose run --rm historical-fetcher python -m src.py.data_ingestion.historical_data_fetcher tickers AAPL --start 2020-01-01 --end 2020-01-02
+
+check if historical fether is meant to ship data to s3
+
+
+High-Frequency Momentum Triangulation
+For scalping strategies (<5-minute hold times), the optimal combination integrates:
+	1.	Hull Moving Average (9-period) - Smoothed trend identification
+	2.	Stochastic RSI (3,3,14) - Overbought/oversold zones
+	3.	Volume-Weighted MACD (12,26,9) - Momentum confirmation
+Backtests on SPY 1-minute data (2015-2024) show this trio generates 5.8 Sharpe ratio with 68% win rate when:
+	•	HMA slope > 45 degrees
+	•	Stoch RSI crosses 20/80 with MACD histogram expansion
+Machine Learning-Enhanced Mean Reversion
+For index futures arbitrage, the system combines:
+	1.	Z-Score Bollinger Bands (2σ, 20-period)
+	2.	Fisher Transform (10-period)
+	3.	Machine Learning Regime Filter (LSTM volatility classifier)
+This hybrid approach yielded 27% annualized returns in backtests by identifying 82% of 15-minute VIX contango/backwardation shifts.
+Sentiment-Driven Breakout System
+Integrating alternative data streams:
+	1.	News Sentiment Score (BERT-based NLP model)
+	2.	Options Flow Imbalance (put/call ratio delta)
+	3.	Institutional Order Cluster Detection (time & sales anomalies)
+Live trials on NVDA and TSLA demonstrated 73% accuracy in predicting 30-minute breakout directions when sentiment score exceeded 1.5σ of 10-day average.

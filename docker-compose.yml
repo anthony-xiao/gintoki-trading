@@ -19,6 +19,12 @@ services:
     command: python -m ml_core.training.trainer
 
   historical-fetcher:
+    image: historical-fetcher:latest
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
     build: .
     environment:
       - PYTHONPATH=/app/src/py
@@ -28,3 +34,16 @@ services:
       - ./src/py:/app/src/py
       - ./data:/app/data
       
+  training-cluster:
+    build: .
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+    command: >
+      bash -c "python -m ml_core.training.trainer
+      && aws s3 cp best_model.h5 s3://quant-trader-data-gintoki/models/"
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G

@@ -18,5 +18,4 @@ COPY . .
 
 # Set Python path
 ENV PYTHONPATH="${PYTHONPATH}:/app/src/py"
-
 CMD ["python", "-m", "data_ingestion.historical_data_fetcher"]
