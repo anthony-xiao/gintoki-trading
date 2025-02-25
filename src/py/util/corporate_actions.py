@@ -122,6 +122,11 @@ class corporate_actions_manager:
 
     def apply_adjustments(self, data: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """Apply corporate actions to data"""
+        #new code
+        if data.empty or not isinstance(data, pd.DataFrame):
+            return data
+        
+        #old
         logger = logging.getLogger(__name__)
         adjusted = data.copy()
         

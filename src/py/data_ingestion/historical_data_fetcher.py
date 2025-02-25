@@ -223,8 +223,12 @@ def fetch_quotes(ticker: str, date: str) -> pd.DataFrame:
         
         data = fetch_paginated_data(url, params)
         
-        if not data:
-            logging.info(f"✅ No quotes found for {ticker} on {date}")
+        # if not data:
+        #     logging.info(f"✅ No quotes found for {ticker} on {date}")
+        #     return pd.DataFrame()
+
+        if not isinstance(data, list) or len(data) == 0:
+            logging.warning(f"No quote data for {ticker} on {date}")
             return pd.DataFrame()
         
         logging.info(f"⏱️ Fetched {len(data)} quotes in {time.time()-start_time:.2f}s")
