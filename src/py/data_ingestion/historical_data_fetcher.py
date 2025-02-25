@@ -382,6 +382,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
         
         def process_date(date: datetime):
             date_str = date.strftime("%Y-%m-%d")
+            logging.info(f"date {date_str}")
             if not is_trading_day(date):
                 return (date_str, pd.DataFrame(), pd.DataFrame())
             return (
@@ -420,7 +421,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                         # gc.collect()  # Force garbage collection
 
     except Exception as e:
-        logging.error(f"Critical error processing {ticker}: {str(e)}, {df}")
+        logging.error(f"Critical error processing {ticker}: {str(e)}")
         
     return results
 
