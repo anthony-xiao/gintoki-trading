@@ -357,7 +357,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
             start_date,
             end_date
     )
-        logging.info("fetch aggregate start {ticker}, {start_date}, {end_date}")
+        logging.info(f"fetch aggregate start {ticker}, {start_date}, {end_date}")
         # Aggregates collection
         for res in [("minute", 1), ("day", 1)]:
             df = fetch_aggregates(
