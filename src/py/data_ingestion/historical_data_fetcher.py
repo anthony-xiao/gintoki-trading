@@ -485,7 +485,7 @@ if __name__ == "__main__":
     def process_ticker(ticker: str):
         """Wrapper function for error handling"""
         try:
-            logging.info(f"v3 🚀 Starting data collection for {ticker}")
+            logging.info(f"v4 🚀 Starting data collection for {ticker}")
             start_time = time.time()
             
             result = fetch_all_data(ticker, args.start, args.end)
