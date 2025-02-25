@@ -122,6 +122,8 @@ class corporate_actions_manager:
 
     def apply_adjustments(self, data: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """Apply corporate actions to data"""
+
+        symbol = str(symbol) if symbol else 'unknown'
         #new code
         if data.empty or not isinstance(data, pd.DataFrame):
             return data
