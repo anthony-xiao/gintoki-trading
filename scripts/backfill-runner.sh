@@ -1,6 +1,6 @@
   #!/bin/bash
 # macOS-compatible date calculations
-START_DATE="2024-01-01"
+START_DATE="2023-01-01"
 END_DATE=$(date -v-2d +%Y-%m-%d)
 # END_DATE="2020-12-31"
 TICKERS="TSLA NVDA AMD GME MRNA AMAT FTNT INTC PLTR SNPS LMT DHR HCA UPS CPB"
@@ -15,4 +15,4 @@ docker run --rm \
   $TICKERS \
   --start $START_DATE \
   --end $END_DATE \
-  --threads 6
+  --threads 64
