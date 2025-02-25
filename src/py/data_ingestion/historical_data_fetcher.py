@@ -372,7 +372,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                         # gc.collect()  # Force garbage collection
 
     except Exception as e:
-        logging.error(f"Critical error processing {ticker}: {str(e)}")
+        logging.error(f"Critical error processing {ticker}: {str(e)}, {results}")
         
     return results
 

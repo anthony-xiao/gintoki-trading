@@ -53,16 +53,20 @@ class corporate_actions_manager:
         # data = fetch_paginated_data(url, params)
 
         if all_splits:
+            if 'ticker' not in pd.DataFrame(all_splits).columns:
+                logging.warning("No 'ticker' column in splits data ,{data}")
+                self.splits = pd.DataFrame()
+        else:
             self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
             self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
-        else:
-            self.splits = pd.DataFrame()
-            logging.info("No splits data found")
 
-        # old code
-        # if data:
-        #     self.splits = pd.DataFrame(data)[['ticker', 'execution_date', 'split_from', 'split_to']]
+
+        #     self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
         #     self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
+        # else:
+        #     self.splits = pd.DataFrame()
+        #     logging.info("No splits data found")
+
 
     def _fetch_dividends(self, symbols: List[str], start_date: str, end_date: str):
         """Fetch dividends"""
@@ -89,11 +93,12 @@ class corporate_actions_manager:
             all_dividends.extend(data)
         
         if all_dividends:
+            if 'ticker' not in pd.DataFrame(all_dividends).columns:
+                logging.info("No ticker column in dividends data found, {data}")
+                self.dividends = pd.DataFrame()
+        else:
             self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
             self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
-        else:
-            self.dividends = pd.DataFrame()
-            logging.info("No dividends data found")
         
         # data = fetch_paginated_data(url, params)
         # if data:
