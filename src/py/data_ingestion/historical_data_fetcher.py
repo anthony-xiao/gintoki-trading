@@ -97,7 +97,9 @@ def fetch_aggregates(ticker: str, start: datetime, end: datetime,
         'c': 'close',
         'v': 'volume',
         'vw': 'vwap'
-    })
+    }).assign(
+        timestamp=lambda df: df['timestamp'].astype(str)  # Convert to string early
+    )
 
 # def fetch_aggregates(ticker: str, start: datetime, end: datetime, 
 #                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
