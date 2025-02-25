@@ -60,51 +60,90 @@ def is_trading_day(date: datetime) -> bool:
     return date.strftime('%Y-%m-%d') in TRADING_DAYS
 
 
-def fetch_aggregates(ticker: str, start: datetime, end: datetime, 
+def fetch_aggregates(ticker: str, start: datetime, end: datetime,
                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
-    """Fetch OHLCV + VWAP data"""
-    url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
-    params = {"adjusted": "true", "sort": "asc", "limit": 50000}
-    logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
-
-    data = fetch_paginated_data(url, params)
-
-    # new code for monthly batches
-
-    # """Fetch OHLCV + VWAP data with monthly batches"""
-    # all_data = []
+    """Fetch OHLCV + VWAP data with null checks"""
+    all_data = []
     
-    # # Split into monthly batches
-    # current_start = start
-    # while current_start < end:
-    #     batch_end = min(
-    #         current_start + timedelta(days=30),  # ~1 month
-    #         end
-    #     )
+    current_start = start
+    while current_start < end:
+        batch_end = min(current_start + timedelta(days=30), end)
         
-    #     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/" \
-    #           f"{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
-    #     params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+        url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
+        params = {"adjusted": "true", "sort": "asc", "limit": 50000}
         
-    #     logging.info(f"Fetching {current_start.date()} to {batch_end.date()} for {ticker}")
-    #     batch_data = fetch_paginated_data(url, params)
+        try:
+            batch_data = fetch_paginated_data(url, params)
+            # Validate each item before adding
+            valid_items = [
+                item for item in batch_data 
+                if all(key in item for key in ['t', 'o', 'h', 'l', 'c', 'v'])
+            ]
+            all_data.extend(valid_items)
+            
+        except Exception as e:
+            logging.error(f"Batch {current_start} to {batch_end} failed: {str(e)}")
+            
+        current_start = batch_end + timedelta(days=1)
 
-        
-    #     all_data.extend(batch_data)
-        
-    #     current_start = batch_end + timedelta(days=1)
-
-    # # new code for monthly batches ends 
-
-    if not data:
+    if not all_data:
         return pd.DataFrame()
     
-    df = pd.DataFrame(data).rename(columns={
-        "t": "timestamp", "o": "open", "h": "high", "n":"transactions",
-        "l": "low", "c": "close", "v": "volume", "vw": "vwap"
+    return pd.DataFrame(all_data).rename(columns={
+        't': 'timestamp',
+        'o': 'open',
+        'h': 'high',
+        'l': 'low', 
+        'c': 'close',
+        'v': 'volume',
+        'vw': 'vwap'
     })
-    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
-    return df.set_index("timestamp")
+
+# def fetch_aggregates(ticker: str, start: datetime, end: datetime, 
+#                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
+#     """Fetch OHLCV + VWAP data"""
+#     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
+#     params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+#     logging.info(f"Fetching {timespan} aggregates from {start} to {end}")
+
+#     data = fetch_paginated_data(url, params)
+
+#     # new code for monthly batches
+
+#     # """Fetch OHLCV + VWAP data with monthly batches"""
+#     # all_data = []
+    
+#     # # Split into monthly batches
+#     # current_start = start
+#     # while current_start < end:
+#     #     batch_end = min(
+#     #         current_start + timedelta(days=30),  # ~1 month
+#     #         end
+#     #     )
+        
+#     #     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/" \
+#     #           f"{current_start.date().isoformat()}/{batch_end.date().isoformat()}"
+#     #     params = {"adjusted": "true", "sort": "asc", "limit": 50000}
+        
+#     #     logging.info(f"Fetching {current_start.date()} to {batch_end.date()} for {ticker}")
+#     #     batch_data = fetch_paginated_data(url, params)
+
+        
+#     #     all_data.extend(batch_data)
+        
+#     #     current_start = batch_end + timedelta(days=1)
+
+#     # # new code for monthly batches ends 
+
+#     if not data:
+#         return pd.DataFrame()
+    
+#     df = pd.DataFrame(data).rename(columns={
+#         "t": "timestamp", "o": "open", "h": "high", "n":"transactions",
+#         "l": "low", "c": "close", "v": "volume", "vw": "vwap"
+#     })
+#     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
+#     return df.set_index("timestamp")
 
 
 def fetch_splits(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -331,7 +370,8 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                 # df.to_parquet(local_path, engine='pyarrow', compression='snappy')
                 
                 # S3 Upload
-                s3_path = f"historical/{ticker}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
+                s3_path = f"historical/{ticker or 'unknown'}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
+                # s3_path = f"historical/{ticker}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
                 if upload_parquet_to_s3(df, os.getenv('AWS_S3_BUCKET'), s3_path):
                     results[f"aggregates_{res[0]}"] = s3_path
 

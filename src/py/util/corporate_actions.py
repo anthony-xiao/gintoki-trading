@@ -150,6 +150,11 @@ class corporate_actions_manager:
     def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start_date: str, end_date: str):
         """Upload splits and dividends to S3"""
         from src.py.data_ingestion.historical_data_fetcher import upload_parquet_to_s3  # Late import
+
+        """Add null check for ticker"""
+        if not ticker or pd.isnull(ticker):
+            logging.error("Invalid ticker for corporate actions upload")
+            return
         
         # Upload splits
         if not self.splits.empty:
