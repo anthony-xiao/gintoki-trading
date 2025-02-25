@@ -343,8 +343,9 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
     """Fetch all data for a ticker."""
     os.makedirs(f"data/historical/{ticker}", exist_ok=True)
     results = {}
-    
+    logging.info("fetch all data start")
     try:
+        logging.info("fetch corporate action start")
         # Initialize corporate actions
         ca_manager = corporate_actions_manager
         ca_manager.fetch_corporate_actions([ticker], start_date, end_date)
@@ -356,7 +357,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
             start_date,
             end_date
     )
-
+        logging.info("fetch aggregate start {ticker}, {start_date}, {end_date}")
         # Aggregates collection
         for res in [("minute", 1), ("day", 1)]:
             df = fetch_aggregates(
@@ -382,7 +383,6 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
         
         def process_date(date: datetime):
             date_str = date.strftime("%Y-%m-%d")
-            logging.info(f"date {date_str}")
             if not is_trading_day(date):
                 return (date_str, pd.DataFrame(), pd.DataFrame())
             return (
