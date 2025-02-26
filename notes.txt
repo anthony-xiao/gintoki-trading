@@ -25,3 +25,55 @@ Integrating alternative data streams:
 	2.	Options Flow Imbalance (put/call ratio delta)
 	3.	Institutional Order Cluster Detection (time & sales anomalies)
 Live trials on NVDA and TSLA demonstrated 73% accuracy in predicting 30-minute breakout directions when sentiment score exceeded 1.5σ of 10-day average.
+
+Here is our current plan 
+
+graph TD
+    A[Polygon.io Real-time Data] -->|Done| B(Node.js Data Ingestor)
+    B -->|Done| C{AWS S3 Historical Storage}
+    C -->|Partial| D[Python Training Cluster]
+    D -->|Not Started| E[SHAP Feature Optimizer]
+    E -->|Not Started| F[LSTM Model Factory]
+    F -->|Not Started| G[Alpaca Execution Engine]
+    G -->|Not Started| H[Performance Monitor]
+    H -->|Not Started| D
+
+using the above. now that i have A->B->C all done with the github links below for each file. lets move on the the next steps C->D. Please give me a summary of what this section is responsible for and a high level summary of what our logic is for this. also what data are we consuming for this, is all of that data already done in sections A->B->C. 
+
+for the implementation remember to give me the FULL code files so i can just copy and paste everything. 
+
+because we are now getting into model training please make sure you go all the way back to you first response as to what is in research the best apporaches to algorithmic trading and based the model around those apporaches 
+
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/.github/workflows/ci.yml 
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/js/core/services/data-engineering/polygon-realtime.mjs
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/requirements.txt
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/docker-compose.yml
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/Makefile
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/Dockerfile
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/py/util/corporate_actions.py
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/py/util/api_client.py
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/py/data_ingestion/historical_data_fetcher.py
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/js/core/services/data-engineering/tick-processor.mjs
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/js/core/services/data-engineering/test-tick-processor.mjs
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/js/core/services/data-engineering/technical-indicators.mjs
+
+https://github.com/anthony-xiao/gintoki-trading/blob/main/src/js/core/services/data-engineering/polygon-realtime.mjs
+
+
+
+graph TD
+    C[S3 Data] --> D1(LSTM Volatility Regime Detector)
+    D1 --> D2(SHAP Feature Optimizer)
+    D2 --> D3(Ensemble Mean Reversion Engine)
+    D3 --> D4(Execution Signal Generator)
