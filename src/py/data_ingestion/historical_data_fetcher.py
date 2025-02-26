@@ -39,7 +39,6 @@ s3 = boto3.client(
 
 def upload_parquet_to_s3(df: pd.DataFrame, bucket: str, key: str) -> bool:
     """Upload DataFrame to S3 as Parquet"""
-    logging.info(f"upload parquet {bucket},{key}")
     try:
         buffer = BytesIO()
         df.to_parquet(buffer, engine='pyarrow', compression='snappy')
@@ -489,7 +488,7 @@ if __name__ == "__main__":
     def process_ticker(ticker: str):
         """Wrapper function for error handling"""
         try:
-            logging.info(f"v5 🚀 Starting data collection for {ticker}")
+            logging.info(f"v6 working 🚀 Starting data collection for {ticker}")
             start_time = time.time()
             
             result = fetch_all_data(ticker, args.start, args.end)
