@@ -172,33 +172,43 @@ class corporate_actions_manager:
     #         if upload_parquet_to_s3(self.dividends, bucket, dividends_key):
     #             logging.info(f"Uploaded dividends to s3://{bucket}/{dividends_key}")
 
-    def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start: str, end: str):
+    def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start: str, end: str) -> str:
+        """Upload corporate actions to S3 with proper error handling"""
         key = f"historical/{ticker}/corporate_actions/{start}_to_{end}.parquet"
-        logging.info(f"🔄 Attempting to upload corporate actions to s3://{bucket}/{key}")
-        logging.info(f"self, {self}")
+        logger = logging.getLogger(__name__)
+        logger.info(f"🔄 Attempting to upload corporate actions to s3://{bucket}/{key}")
+        
         try:
-            if self.dividends.empty and self.splits.empty:
-                logging.warning("No corporate actions to upload")
-                return False
-                
-            combined = pd.concat([self.dividends, self.splits])
-
+            # Combine splits and dividends
+            combined = pd.concat([self.splits, self.dividends])
+            
             if combined.empty:
-                logging.error("Empty corporate actions DataFrame")
-                return False
+                self.logger.warning("No corporate actions found for period")
+                # Upload empty dataframe to maintain schema
+                combined = pd.DataFrame(columns=[
+                    'execution_date', 'declaration_date', 'record_date', 
+                    'payment_date', 'type', 'cash_amount', 'split_ratio'
+                ])
             
-            logging.info(f"📦 Data to upload:\n{combined.head()}")
+            # Convert dates to datetime
+            date_cols = ['execution_date', 'declaration_date', 'record_date', 'payment_date']
+            combined[date_cols] = combined[date_cols].apply(pd.to_datetime, errors='coerce')
             
+            # Add ticker column
+            combined['ticker'] = ticker
+            
+            logger.info(f"📦 Uploading {len(combined)} corporate actions")
             success = upload_parquet_to_s3(combined, bucket, key)
-            if success:
-                logging.info(f"✅ Successfully uploaded {len(combined)} corporate actions")
-            else:
-                logging.error("❌ Failed to upload corporate actions")
-            return success
             
+            if success:
+                logger.info(f"✅ Successfully uploaded to s3://{bucket}/{key}")
+                return f"s3://{bucket}/{key}"
+            return None
+
         except Exception as e:
-            logging.error(f"🔥 Corporate action upload failed: {str(e)}")
-            return False
+            logger.error(f"🔥 Failed to upload corporate actions: {str(e)}")
+            return None
+
 
 
 
