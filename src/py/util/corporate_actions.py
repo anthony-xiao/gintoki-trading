@@ -54,7 +54,7 @@ class corporate_actions_manager:
         
         # data = fetch_paginated_data(url, params)
 
-        logging.info(f"splits {all_splits} ")
+        # logging.info(f"splits {all_splits} ")
         if all_splits:
             if 'ticker' not in pd.DataFrame(all_splits).columns:
                 logging.warning("No 'ticker' column in splits data ,{data}")
@@ -141,7 +141,7 @@ class corporate_actions_manager:
                 self.dividends = pd.DataFrame()
             else:
                 # Use all_dividends to construct DataFrame
-                self.dividends = pd.DataFrame(all_dividends)[['ticker', 'ex_dividend_date', 'cash_amount', 'declaration_date', 'record_date', 'payment_date']]
+                self.dividends = pd.DataFrame(all_dividends)[['ticker', 'ex_dividend_date', 'cash_amount', 'declaration_date', 'record_date', 'pay_date']]
                 self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
                 logging.info(f"Processed {len(self.dividends)} dividends")
         else:
