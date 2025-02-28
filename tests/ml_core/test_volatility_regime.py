@@ -1,7 +1,8 @@
+from src.py.ml_core.data_loader import EnhancedDataLoader
 import pytest
 import pandas as pd
 import numpy as np
-from ml_core.volatility_regime import EnhancedVolatilityDetector
+from src.py.ml_core.volatility_regime import EnhancedVolatilityDetector
 
 @pytest.fixture
 def sample_data():

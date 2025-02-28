@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from ml_core.shap_optimizer import EnhancedSHAPOptimizer
+from src.py.ml_core.shap_optimizer import EnhancedSHAPOptimizer
 
 def test_feature_retention():
     optimizer = EnhancedSHAPOptimizer()

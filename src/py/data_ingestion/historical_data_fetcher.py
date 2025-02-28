@@ -63,6 +63,7 @@ def is_trading_day(date: datetime) -> bool:
 def fetch_aggregates(ticker: str, start: datetime, end: datetime,
                     multiplier: int = 1, timespan: str = "minute") -> pd.DataFrame:
     """Fetch OHLCV + VWAP data with null checks"""
+    logging.info("state fetch aggregates")
     all_data = []
     
     current_start = start
@@ -372,6 +373,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                 # df.to_parquet(local_path, engine='pyarrow', compression='snappy')
                 
                 # S3 Upload
+                logging.info(f"prepare to start upload aggregate {os.getenv('AWS_S3_BUCKET')}, {s3_path}")
                 s3_path = f"historical/{ticker or 'unknown'}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"
                 logging.info(f"start upload aggregate {os.getenv('AWS_S3_BUCKET')}, {s3_path}")
                 # s3_path = f"historical/{ticker}/aggregates/{res[0]}/{start_date}_to_{end_date}.parquet"

@@ -1,7 +1,7 @@
 import pytest
-from ml_core.data_loader import EnhancedDataLoader
-from ml_core.volatility_regime import EnhancedVolatilityDetector
-from ml_core.ensemble_strategy import EnhancedEnsembleTrader
+from src.py.ml_core.data_loader import EnhancedDataLoader
+from src.py.ml_core.volatility_regime import EnhancedVolatilityDetector
+from src.py.ml_core.ensemble_strategy import EnhancedEnsembleTrader
 
 def test_full_pipeline():
     # Load sample data

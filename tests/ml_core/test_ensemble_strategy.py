@@ -1,7 +1,7 @@
 import pytest
 import pandas as pd
 import numpy as np
-from ml_core.ensemble_strategy import EnhancedEnsembleTrader
+from src.py.ml_core.ensemble_strategy import EnhancedEnsembleTrader
 
 @pytest.fixture
 def sample_features():

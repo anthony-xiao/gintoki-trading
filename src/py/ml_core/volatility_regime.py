@@ -1,9 +1,10 @@
+from typing import List
 import tensorflow as tf
 import numpy as np
 import pandas as pd
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from sklearn.metrics import classification_report
-from .data_loader import EnhancedDataLoader
+from src.py.ml_core.data_loader import EnhancedDataLoader
 
 class EnhancedVolatilityDetector:
     def __init__(self, lookback: int = 60):

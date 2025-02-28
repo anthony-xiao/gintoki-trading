@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from typing import Dict, List
 import logging
+from src.py.data_ingestion.historical_data_fetcher import upload_parquet_to_s3
 
 # Shared utilities
 from src.py.util.api_client import fetch_paginated_data
@@ -21,6 +22,7 @@ class corporate_actions_manager:
         self.dividend_map = {}
 
     def fetch_corporate_actions(self, symbols: List[str], start_date: str, end_date: str):
+        logging.info(f"start corporate fecthing {symbols}")
         """Fetch splits and dividends"""
         self._fetch_splits(symbols, start_date, end_date)
         self._fetch_dividends(symbols, start_date, end_date)
@@ -149,26 +151,55 @@ class corporate_actions_manager:
                 
         return adjusted
     
-    def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start_date: str, end_date: str):
-        """Upload splits and dividends to S3"""
-        from src.py.data_ingestion.historical_data_fetcher import upload_parquet_to_s3  # Late import
+    # def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start_date: str, end_date: str):
+    #     """Upload splits and dividends to S3"""
+    #     from src.py.data_ingestion.historical_data_fetcher import upload_parquet_to_s3  # Late import
 
-        """Add null check for ticker"""
-        if not ticker or pd.isnull(ticker):
-            logging.error("Invalid ticker for corporate actions upload")
-            return
+    #     """Add null check for ticker"""
+    #     if not ticker or pd.isnull(ticker):
+    #         logging.error("Invalid ticker for corporate actions upload")
+    #         return
         
-        # Upload splits
-        if not self.splits.empty:
-            splits_key = f"historical/{ticker}/corporate_actions/splits/{start_date}_to_{end_date}.parquet"
-            if upload_parquet_to_s3(self.splits, bucket, splits_key):
-                logging.info(f"Uploaded splits to s3://{bucket}/{splits_key}")
+    #     # Upload splits
+    #     if not self.splits.empty:
+    #         splits_key = f"historical/{ticker}/corporate_actions/splits/{start_date}_to_{end_date}.parquet"
+    #         if upload_parquet_to_s3(self.splits, bucket, splits_key):
+    #             logging.info(f"Uploaded splits to s3://{bucket}/{splits_key}")
         
-        # Upload dividends
-        if not self.dividends.empty:
-            dividends_key = f"historical/{ticker}/corporate_actions/dividends/{start_date}_to_{end_date}.parquet"
-            if upload_parquet_to_s3(self.dividends, bucket, dividends_key):
-                logging.info(f"Uploaded dividends to s3://{bucket}/{dividends_key}")
+    #     # Upload dividends
+    #     if not self.dividends.empty:
+    #         dividends_key = f"historical/{ticker}/corporate_actions/dividends/{start_date}_to_{end_date}.parquet"
+    #         if upload_parquet_to_s3(self.dividends, bucket, dividends_key):
+    #             logging.info(f"Uploaded dividends to s3://{bucket}/{dividends_key}")
+
+    def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start: str, end: str):
+        key = f"historical/{ticker}/corporate_actions/corporate_actions_{start}_to_{end}.parquet"
+        logging.info(f"🔄 Attempting to upload corporate actions to s3://{bucket}/{key}")
+    
+        try:
+            if self.dividends.empty and self.splits.empty:
+                logging.warning("No corporate actions to upload")
+                return False
+                
+            combined = pd.concat([self.dividends, self.splits])
+
+            if combined.empty:
+                logging.error("Empty corporate actions DataFrame")
+                return False
+            
+            logging.info(f"📦 Data to upload:\n{combined.head()}")
+            
+            success = upload_parquet_to_s3(combined, bucket, key)
+            if success:
+                logging.info(f"✅ Successfully uploaded {len(combined)} corporate actions")
+            else:
+                logging.error("❌ Failed to upload corporate actions")
+            return success
+            
+        except Exception as e:
+            logging.error(f"🔥 Corporate action upload failed: {str(e)}")
+            return False
+
 
 
 # Singleton instance
