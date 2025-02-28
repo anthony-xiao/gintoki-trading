@@ -173,9 +173,9 @@ class corporate_actions_manager:
     #             logging.info(f"Uploaded dividends to s3://{bucket}/{dividends_key}")
 
     def upload_corporate_actions_to_s3(self, bucket: str, ticker: str, start: str, end: str):
-        key = f"historical/{ticker}/corporate_actions/corporate_actions_{start}_to_{end}.parquet"
+        key = f"historical/{ticker}/corporate_actions/{start}_to_{end}.parquet"
         logging.info(f"🔄 Attempting to upload corporate actions to s3://{bucket}/{key}")
-    
+        logging.info(f"self, {self}")
         try:
             if self.dividends.empty and self.splits.empty:
                 logging.warning("No corporate actions to upload")
