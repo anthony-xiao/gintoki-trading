@@ -97,8 +97,7 @@ class corporate_actions_manager:
                 return
                 
             self.splits = split_df[[
-                'ticker', 'execution_date', 'split_from', 'split_to',
-                'declaration_date', 'record_date', 'payment_date'
+                'ticker', 'execution_date', 'split_from', 'split_to'
             ]].rename(columns={'ticker': 'symbol'})
             
             # Convert ratio to float
