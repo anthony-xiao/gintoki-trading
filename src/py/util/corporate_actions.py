@@ -160,12 +160,14 @@ class corporate_actions_manager:
             self.split_map = self.splits.groupby('symbol')[['execution_date', 'split_ratio']] \
                 .apply(lambda x: x.set_index('execution_date')['split_ratio'].to_dict()) \
                 .to_dict()
+            logging.info(f"{self.splits}")
 
         if not self.dividends.empty:
             self.dividends['ex_dividend_date'] = pd.to_datetime(self.dividends['ex_dividend_date'])
             self.dividend_map = self.dividends.groupby('symbol')[['ex_dividend_date', 'cash_amount']] \
                 .apply(lambda x: x.set_index('ex_dividend_date')['cash_amount'].to_dict()) \
                 .to_dict()
+            logging.info(f"{self.dividends}")
 
     def apply_adjustments(self, data: pd.DataFrame, symbol: str) -> pd.DataFrame:
         """Apply corporate actions to data"""
@@ -232,11 +234,11 @@ class corporate_actions_manager:
                 # Upload empty dataframe to maintain schema
                 combined = pd.DataFrame(columns=[
                     'execution_date', 'declaration_date', 'record_date', 
-                    'payment_date', 'type', 'cash_amount', 'split_ratio'
+                    'pay_date', 'type', 'cash_amount', 'split_ratio'
                 ])
             
             # Convert dates to datetime
-            date_cols = ['execution_date', 'declaration_date', 'record_date', 'payment_date']
+            date_cols = ['execution_date', 'declaration_date', 'record_date', 'pay_date']
             combined[date_cols] = combined[date_cols].apply(pd.to_datetime, errors='coerce')
             
             # Add ticker column
