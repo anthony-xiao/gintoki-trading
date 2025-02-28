@@ -350,16 +350,16 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
         
         # Get corporate actions
         logging.info("Fetching corporate actions...")
-        bucket = corporate_actions_manager.fetch_corporate_actions(ticker, start_date, end_date)
+        corporate_actions_manager.fetch_corporate_actions(ticker, start_date, end_date)
         
         # Upload corporate actions
         s3_path = corporate_actions_manager.upload_corporate_actions_to_s3(
-            bucket, ticker, start_date, end_date
+            os.getenv('AWS_S3_BUCKET'), ticker, start_date, end_date
         )
         
         if not s3_path:
             logging.warning("No corporate actions found for %s", ticker)
-            s3_path = f"s3://{bucket}/historical/{ticker}/corporate_actions/empty.parquet"
+            s3_path = f"s3://{os.getenv('AWS_S3_BUCKET')}/historical/{ticker}/corporate_actions/empty.parquet"
 
         logging.info("Corporate actions path: %s", s3_path)
 

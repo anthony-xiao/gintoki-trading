@@ -183,7 +183,7 @@ class corporate_actions_manager:
             combined = pd.concat([self.splits, self.dividends])
             
             if combined.empty:
-                logger.warning("No corporate actions found for period")
+                logger.warning(f"No corporate actions found for period {combined} ")
                 # Upload empty dataframe to maintain schema
                 combined = pd.DataFrame(columns=[
                     'execution_date', 'declaration_date', 'record_date', 
