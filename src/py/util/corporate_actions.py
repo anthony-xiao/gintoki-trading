@@ -54,6 +54,7 @@ class corporate_actions_manager:
         
         # data = fetch_paginated_data(url, params)
 
+        logging.info(f"splits {all_splits} ")
         if all_splits:
             if 'ticker' not in pd.DataFrame(all_splits).columns:
                 logging.warning("No 'ticker' column in splits data ,{data}")
@@ -61,7 +62,6 @@ class corporate_actions_manager:
         else:
             self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
             self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
-            logging.info(f"splits {all_splits} ")
             logging.info(f"splits {self.splits} ")
 
 
