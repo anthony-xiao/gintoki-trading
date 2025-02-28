@@ -28,48 +28,86 @@ class corporate_actions_manager:
         self._fetch_dividends(symbols, start_date, end_date)
         self._create_adjustment_maps()
 
+    # def _fetch_splits(self, symbols: List[str], start_date: str, end_date: str):
+    #     """Fetch stock splits"""
+    #     url = f"{BASE_URL}/v3/reference/splits"
+    #     start_year = int(start_date[:4])
+    #     end_year = int(end_date[:4])
+    #     all_splits = []
+
+    #     # New code 
+    #     for year in range(start_year, end_year+1):
+    #         year_start = max(start_date, f"{year}-01-01")
+    #         year_end = min(end_date, f"{year}-12-31")
+        
+    #     # Old code
+    #         params = {
+    #             'ticker.in': ','.join(symbols),
+    #             'execution_date.gte': start_date,
+    #             'execution_date.lte': end_date,
+    #             'limit': 1000
+    #         }
+    #     # new code
+    #         logging.info(f"Fetching splits {year_start} to {year_end}")
+    #         data = fetch_paginated_data(url, params)
+    #         all_splits.extend(data)
+        
+    #     # data = fetch_paginated_data(url, params)
+
+    #     # logging.info(f"splits {all_splits} ")
+    #     if all_splits:
+    #         if 'ticker' not in pd.DataFrame(all_splits).columns:
+    #             logging.warning("No 'ticker' column in splits data ,{data}")
+    #             self.splits = pd.DataFrame()
+    #     else:
+    #         self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
+    #         self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
+    #         logging.info(f"splits {self.splits} ")
+
+
+    #     #     self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
+    #     #     self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
+    #     # else:
+    #     #     self.splits = pd.DataFrame()
+    #     #     logging.info("No splits data found")
+
+
     def _fetch_splits(self, symbols: List[str], start_date: str, end_date: str):
         """Fetch stock splits"""
         url = f"{BASE_URL}/v3/reference/splits"
-        start_year = int(start_date[:4])
-        end_year = int(end_date[:4])
         all_splits = []
-
-        # New code 
-        for year in range(start_year, end_year+1):
-            year_start = max(start_date, f"{year}-01-01")
-            year_end = min(end_date, f"{year}-12-31")
         
-        # Old code
-            params = {
-                'ticker.in': ','.join(symbols),
-                'execution_date.gte': start_date,
-                'execution_date.lte': end_date,
-                'limit': 1000
-            }
-        # new code
-            logging.info(f"Fetching splits {year_start} to {year_end}")
-            data = fetch_paginated_data(url, params)
-            all_splits.extend(data)
+        params = {
+            'ticker.in': ','.join(symbols),
+            'execution_date.gte': start_date,
+            'execution_date.lte': end_date,
+            'limit': 1000
+        }
         
-        # data = fetch_paginated_data(url, params)
+        logging.info(f"Fetching splits {start_date} to {end_date}")
+        data = fetch_paginated_data(url, params)
+        all_splits.extend(data)
 
-        # logging.info(f"splits {all_splits} ")
         if all_splits:
-            if 'ticker' not in pd.DataFrame(all_splits).columns:
-                logging.warning("No 'ticker' column in splits data ,{data}")
+            # Validate columns before processing
+            split_df = pd.DataFrame(all_splits)
+            if 'ticker' not in split_df.columns:
+                logging.error("'ticker' column missing in splits data")
                 self.splits = pd.DataFrame()
+                return
+                
+            self.splits = split_df[[
+                'ticker', 'execution_date', 'split_from', 'split_to',
+                'declaration_date', 'record_date', 'payment_date'
+            ]].rename(columns={'ticker': 'symbol'})
+            
+            # Convert ratio to float
+            self.splits['split_ratio'] = self.splits['split_to'] / self.splits['split_from']
+            logging.info(f"Processed {len(self.splits)} splits")
         else:
-            self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
-            self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
-            logging.info(f"splits {self.splits} ")
+            self.splits = pd.DataFrame()
+            logging.info("No splits data found")
 
-
-        #     self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
-        #     self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
-        # else:
-        #     self.splits = pd.DataFrame()
-        #     logging.info("No splits data found")
 
 
     # def _fetch_dividends(self, symbols: List[str], start_date: str, end_date: str):
@@ -147,9 +185,6 @@ class corporate_actions_manager:
         else:
             self.dividends = pd.DataFrame()
             logging.info("No dividends data found")
-
-
-
 
 
     def _create_adjustment_maps(self):
