@@ -1,7 +1,7 @@
 import argparse
 from datetime import datetime
 from src.py.util.corporate_actions import corporate_actions_manager
-from src.py.util.api_client import PolygonAPIClient
+# from src.py.util.api_client import PolygonAPIClient
 import logging
 
 def main():
@@ -15,7 +15,7 @@ def main():
     logger = logging.getLogger('CA Backfill')
 
     # Initialize API Client
-    api = PolygonAPIClient()
+    # api = PolygonAPIClient()
 
     try:
         logger.info(f"Backfilling corporate actions from {args.start} to {args.end}")
