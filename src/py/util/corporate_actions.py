@@ -72,44 +72,85 @@ class corporate_actions_manager:
         #     logging.info("No splits data found")
 
 
+    # def _fetch_dividends(self, symbols: List[str], start_date: str, end_date: str):
+    #     """Fetch dividends"""
+    #     url = f"{BASE_URL}/v3/reference/dividends"
+
+    #     start_year = int(start_date[:4])
+    #     end_year = int(end_date[:4])
+    #     all_dividends = []
+
+    #     for year in range(start_year, end_year+1):
+    #         year_start = max(start_date, f"{year}-01-01")
+    #         year_end = min(end_date, f"{year}-12-31")
+        
+    
+    #         params = {
+    #             'ticker.in': ','.join(symbols),
+    #             'ex_dividend_date.gte': start_date,
+    #             'ex_dividend_date.lte': end_date,
+    #             'limit': 1000
+    #         }
+
+    #         logging.info(f"Fetching dividends {year_start} to {year_end}")
+    #         data = fetch_paginated_data(url, params)
+    #         all_dividends.extend(data)
+        
+    #     logging.info(f"splits {all_dividends} ")    
+    #     if all_dividends:
+    #         if 'ticker' not in pd.DataFrame(all_dividends).columns:
+    #             logging.info("No ticker column in dividends data found, {data}")
+    #             self.dividends = pd.DataFrame()
+    #     else:
+    #         self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
+    #         self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+    #         logging.info(f"splits {self.dividends} ")
+        
+    #     # data = fetch_paginated_data(url, params)
+    #     # if data:
+    #     #     self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
+    #     #     self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+
     def _fetch_dividends(self, symbols: List[str], start_date: str, end_date: str):
         """Fetch dividends"""
         url = f"{BASE_URL}/v3/reference/dividends"
-
         start_year = int(start_date[:4])
         end_year = int(end_date[:4])
         all_dividends = []
-
+        
         for year in range(start_year, end_year+1):
             year_start = max(start_date, f"{year}-01-01")
             year_end = min(end_date, f"{year}-12-31")
-        
-    
+            
             params = {
                 'ticker.in': ','.join(symbols),
-                'ex_dividend_date.gte': start_date,
-                'ex_dividend_date.lte': end_date,
+                'ex_dividend_date.gte': year_start,
+                'ex_dividend_date.lte': year_end,
                 'limit': 1000
             }
-
+            
             logging.info(f"Fetching dividends {year_start} to {year_end}")
             data = fetch_paginated_data(url, params)
             all_dividends.extend(data)
-        
-        logging.info(f"splits {all_dividends} ")    
+
         if all_dividends:
-            if 'ticker' not in pd.DataFrame(all_dividends).columns:
-                logging.info("No ticker column in dividends data found, {data}")
+            # Use accumulated all_dividends instead of last batch
+            df_check = pd.DataFrame(all_dividends)
+            if 'ticker' not in df_check.columns:
+                logging.warning(f"No 'ticker' column in dividends data")
                 self.dividends = pd.DataFrame()
+            else:
+                # Use all_dividends to construct DataFrame
+                self.dividends = pd.DataFrame(all_dividends)[['ticker', 'ex_dividend_date', 'cash_amount', 'declaration_date', 'record_date', 'payment_date']]
+                self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+                logging.info(f"Processed {len(self.dividends)} dividends")
         else:
-            self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
-            self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
-            logging.info(f"splits {self.dividends} ")
-        
-        # data = fetch_paginated_data(url, params)
-        # if data:
-        #     self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
-        #     self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+            self.dividends = pd.DataFrame()
+            logging.info("No dividends data found")
+
+
+
+
 
     def _create_adjustment_maps(self):
         """Create adjustment lookup structures"""
