@@ -61,6 +61,8 @@ class corporate_actions_manager:
         else:
             self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
             self.splits.rename(columns={'ticker': 'symbol'}, inplace=True)
+            logging.info(f"splits {all_splits} ")
+            logging.info(f"splits {self.splits} ")
 
 
         #     self.splits = pd.DataFrame(all_splits)[['ticker', 'execution_date', 'split_from', 'split_to']]
@@ -101,6 +103,8 @@ class corporate_actions_manager:
         else:
             self.dividends = pd.DataFrame(data)[['ticker', 'ex_dividend_date', 'cash_amount']]
             self.dividends.rename(columns={'ticker': 'symbol'}, inplace=True)
+            logging.info(f"splits {all_dividends} ")
+            logging.info(f"splits {self.dividends} ")
         
         # data = fetch_paginated_data(url, params)
         # if data:
