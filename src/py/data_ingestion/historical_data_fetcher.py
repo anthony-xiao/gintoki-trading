@@ -338,46 +338,10 @@ def initialize_trading_days():
         logging.warning("Using fallback weekday calendar")
 
 def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str]:
-    """Main fetch function with deferred corporate actions import"""
-    # Deferred import breaks circular dependency
-    from src.py.util.corporate_actions import corporate_actions_manager
     """Fetch all data for a ticker."""
     results = {}
     logging.info("fetch all data start")
     try:
-        # Fetch corporate actions first
-        logging.info("\n=== Processing %s ===", ticker)
-        
-        # Get corporate actions
-        logging.info("Fetching corporate actions...")
-        corporate_actions_manager.fetch_corporate_actions(ticker, start_date, end_date)
-        
-        # Upload corporate actions
-        s3_path = corporate_actions_manager.upload_corporate_actions_to_s3(
-            os.getenv('AWS_S3_BUCKET'), ticker, start_date, end_date
-        )
-        
-        if not s3_path:
-            logging.warning("No corporate actions found for %s", ticker)
-            s3_path = f"s3://{os.getenv('AWS_S3_BUCKET')}/historical/{ticker}/corporate_actions/empty.parquet"
-
-        logging.info("Corporate actions path: %s", s3_path)
-
-
-
-        # logging.info("fetch corporate action start")
-        # # Initialize corporate actions
-        # ca_manager = corporate_actions_manager
-        # ca_manager.fetch_corporate_actions([ticker], start_date, end_date)
-
-        # # Add corporate actions upload
-        # ca_manager.upload_corporate_actions_to_s3(
-        #     os.getenv('AWS_S3_BUCKET'), 
-        #     ticker,
-        #     start_date,
-        #     end_date
-    # )
-    
         # Aggregates collection
         for res in [("minute", 1), ("day", 1)]:
             df = fetch_aggregates(
@@ -531,11 +495,13 @@ if __name__ == "__main__":
         results = pool.map(process_ticker, args.tickers)
         success_count = sum(results)
 
-    # Fetch corporate actions after data collection
-    logging.info("🔄 Collecting corporate actions for all symbols")
+    # Fetch market-wide corporate actions once
+    logging.info("🔄 Collecting market-wide corporate actions")
     ca_start = time.time()
-    ca_manager.fetch_corporate_actions(args.tickers, args.start, args.end)
-    logging.info(f"⏱️ Corporate actions collected in {time.time()-ca_start:.2f}s")
-
-    logging.info(f"📊 Final result: {success_count}/{len(args.tickers)} "
-                "tickers processed successfully")
+    corporate_actions_manager.fetch_market_actions(args.start, args.end)
+    corporate_actions_manager.upload_market_actions(
+        os.getenv('AWS_S3_BUCKET'), 
+        args.start, 
+        args.end
+    )
+    logging.info(f"⏱️ Market corporate actions processed in {time.time()-ca_start:.2f}s")
