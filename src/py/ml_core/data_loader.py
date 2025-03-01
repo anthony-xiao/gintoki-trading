@@ -14,15 +14,42 @@ class EnhancedDataLoader:
             'days_since_dividend', 'split_ratio', 'bid_ask_spread', 'mid_price'
         ]
         self.corporate_actions = self._load_corporate_actions()
-
+    
     def _load_corporate_actions(self) -> Dict[str, pd.DataFrame]:
-        """Load corporate actions for all tickers"""
-        response = self.s3.get_object(
+        """Load corporate actions from split S3 paths"""
+        actions = []
+        
+        # Load dividends
+        dividend_objs = self.s3.list_objects_v2(
             Bucket=self.bucket,
-            Key='corporate_actions/corporate_actions.parquet'
-        )
-        df = pd.read_parquet(BytesIO(response['Body'].read()))
-        return {ticker: group for ticker, group in df.groupby('symbol')}
+            Prefix='corporate_actions/dividends/'
+        ).get('Contents', [])
+        
+        for obj in dividend_objs:
+            if obj['Key'].endswith('.parquet'):
+                response = self.s3.get_object(Bucket=self.bucket, Key=obj['Key'])
+                df = pd.read_parquet(BytesIO(response['Body'].read()))
+                df['type'] = 'dividend'  # Add type column
+                actions.append(df)
+
+        # Load splits
+        split_objs = self.s3.list_objects_v2(
+            Bucket=self.bucket,
+            Prefix='corporate_actions/splits/'
+        ).get('Contents', [])
+        
+        for obj in split_objs:
+            if obj['Key'].endswith('.parquet'):
+                response = self.s3.get_object(Bucket=self.bucket, Key=obj['Key'])
+                df = pd.read_parquet(BytesIO(response['Body'].read()))
+                df['type'] = 'split'  # Add type column
+                actions.append(df)
+
+        if not actions:
+            return {}
+        all_actions = pd.concat(actions)
+        return {ticker: group for ticker, group in all_actions.groupby('symbol')}
+
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
         """Load and enhance data for a single ticker"""
@@ -45,6 +72,8 @@ class EnhancedDataLoader:
                 if obj['Key'].endswith('.parquet'):
                     response = self.s3.get_object(Bucket=self.bucket, Key=obj['Key'])
                     dfs.append(pd.read_parquet(BytesIO(response['Body'].read())))
+        if not dfs:
+            return pd.DataFrame()
         return pd.concat(dfs).sort_index()
 
     def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -76,10 +105,15 @@ class EnhancedDataLoader:
     def _process_quotes(self, ticker: str) -> pd.DataFrame:
         """Process raw quotes into spread features"""
         quotes = self._load_s3_data(f'historical/{ticker}/quotes/')
-        return quotes.resample('1T').agg({
+        # Handle empty case first
+        if quotes.empty:
+            return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size'], 
+                            index=pd.DatetimeIndex([]))
+
+        return quotes.resample('1min').agg({
             'bid_price': 'mean',
             'ask_price': 'mean',
-            'bid_size': 'sum',
+            'bid_size': 'sum', 
             'ask_size': 'sum'
         }).assign(
             bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],

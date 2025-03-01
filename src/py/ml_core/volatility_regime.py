@@ -14,15 +14,14 @@ class EnhancedVolatilityDetector:
 
     def _build_model(self, lookback: int) -> tf.keras.Model:
         """Construct LSTM architecture with attention"""
-        model = tf.keras.Sequential([
-            tf.keras.layers.LSTM(128, return_sequences=True,
-                               input_shape=(lookback, len(self.data_loader.feature_columns))),
-            tf.keras.layers.Dropout(0.3),
-            tf.keras.layers.Attention(),
-            tf.keras.layers.LSTM(64),
-            tf.keras.layers.Dense(32, activation='relu'),
-            tf.keras.layers.Dense(3, activation='softmax')
-        ])
+        inputs = tf.keras.Input(shape=(lookback, len(self.data_loader.feature_columns)))
+        x = tf.keras.layers.LSTM(128, return_sequences=True)(inputs)
+        x = tf.keras.layers.Dropout(0.3)(x)
+        x = tf.keras.layers.MultiHeadAttention(num_heads=4, key_dim=64)(query=x, value=x)
+        x = tf.keras.layers.LSTM(64)(x)
+        x = tf.keras.layers.Dense(32, activation='relu')(x)
+        outputs = tf.keras.layers.Dense(3, activation='softmax')(x)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
         model.compile(
             optimizer=tf.keras.optimizers.Adamax(learning_rate=0.001),
             loss='sparse_categorical_crossentropy',
@@ -32,12 +31,19 @@ class EnhancedVolatilityDetector:
 
     def _calculate_event_volatility(self, df: pd.DataFrame) -> pd.DataFrame:
         """Enhance volatility calculation with corporate actions"""
-        df['returns'] = np.log(df['close'] / df['close'].shift(1))
-        df['base_volatility'] = df['returns'].rolling(20).std()
+        df = df.copy()
+    
+        # Handle zero/NaN in close prices
+        df['close'] = df['close'].replace(0, np.nan).ffill()
         
-        # Event boosts
+        # Calculate returns safely
+        df['returns'] = np.log(df['close'] / df['close'].shift(1))
+        # Calculate volatility using price ranges
+        df['price_range'] = (df['high'] - df['low']) / df['close']
+        df['base_volatility'] = df['price_range'].rolling(20, min_periods=1).mean()
+        # Calculate boosts with NaN protection
         df['div_boost'] = np.where(df['days_since_dividend'] < 5, 1.3, 1.0)
-        df['split_boost'] = np.where(df['split_ratio'] != 1.0, 1.5, 1.0)
+        df['split_boost'] = np.where(np.abs(df['split_ratio'] - 1.0) > 1e-8, 1.5 / (df['split_ratio'] + 1e-8), 1.0)
         df['event_volatility'] = df['base_volatility'] * df[['div_boost', 'split_boost']].max(axis=1)
         
         return df
