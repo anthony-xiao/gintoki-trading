@@ -7,8 +7,8 @@ from sklearn.metrics import classification_report
 from src.py.ml_core.data_loader import EnhancedDataLoader
 
 class EnhancedVolatilityDetector:
-    def __init__(self, lookback: int = 60):
-        self.data_loader = EnhancedDataLoader()
+    def __init__(self, lookback: int = 60, data_loader: EnhancedDataLoader = None):
+        self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
         self.model = self._build_model(lookback)
         self.lookback = lookback
 
@@ -64,22 +64,31 @@ class EnhancedVolatilityDetector:
         )
         return df.dropna()
 
-    def train(self, tickers: List[str], epochs: int = 100):
-        """Enhanced training pipeline"""
+    def train_model(self, tickers: List[str] = None, epochs: int = 100):
+        """Complete training implementation with data pipeline"""
+        if not tickers:
+            tickers = self.data_loader.get_available_tickers()
+        
+        # Generate training data through data loader
         data = pd.concat([self._process_ticker(t) for t in tickers])
         X = self.data_loader.create_sequences(data)
         y = data['regime'].values[self.lookback:]
         
+        # Train with checkpoints
         self.model.fit(
             X, y,
             epochs=epochs,
             batch_size=8192,
             validation_split=0.2,
             callbacks=[
-                ModelCheckpoint('regime_model.h5', save_best_only=True),
+                ModelCheckpoint('src/py/ml_core/models/regime_model.h5', 
+                            save_best_only=True,
+                            monitor='val_accuracy'),
                 EarlyStopping(patience=5, restore_best_weights=True)
             ]
         )
+        # Save final weights
+        self.model.save('src/py/ml_core/models/regime_model.h5')
 
     def _process_ticker(self, ticker: str) -> pd.DataFrame:
         """Process individual ticker data"""
