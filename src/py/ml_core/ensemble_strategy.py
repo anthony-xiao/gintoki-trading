@@ -12,7 +12,7 @@ class EnhancedEnsembleTrader:
         self.data_loader = EnhancedDataLoader()
         self.scaler = RobustScaler()
         self.models = {
-            'lstm': tf.keras.models.load_model('regime_model.h5'),
+            'lstm': tf.keras.models.load_model('src/py/ml_core/models/regime_model.h5'),
             'xgb': XGBClassifier(n_estimators=500, learning_rate=0.01),
             'rf': RandomForestClassifier(n_estimators=300, max_depth=10)
         }
