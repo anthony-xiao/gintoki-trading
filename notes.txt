@@ -77,3 +77,17 @@ graph TD
     D1 --> D2(SHAP Feature Optimizer)
     D2 --> D3(Ensemble Mean Reversion Engine)
     D3 --> D4(Execution Signal Generator)
+
+
+
+graph TD
+    A[Polygon.io Real-time Data] -->|Done| B(Node.js Data Ingestor)
+    B -->|Done| C{AWS S3 Historical Storage}
+    C --> D1(LSTM Volatility Regime Detector)
+    D1 --> D2(SHAP Feature Optimizer)
+    D2 --> D3(Transformer Trend Analyzer)  <!-- NEW -->
+    D3 --> D4(Adaptive Ensemble Engine)    <!-- MODIFIED -->
+    D4 --> F[LSTM+Transformer Model Factory]
+    F --> G[Alpaca Execution Engine]
+    G --> H[Performance Monitor]
+    H --> D1  <!-- Feedback loop -->

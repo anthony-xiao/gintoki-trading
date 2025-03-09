@@ -2,7 +2,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock, patch
-from src.py.ml_core.ensemble_strategy import EnhancedEnsembleTrader
+from src.py.ml_core.ensemble_strategy import AdaptiveEnsembleTrader
 
 # Mock feature mask indices aligned with test data columns
 MOCK_FEATURE_MASK = np.array([0, 1, 4, 5])  # Positions of: days_since_dividend, split_ratio, div_alert, split_alert
@@ -28,7 +28,7 @@ def mock_trader():
         mock_rf = MagicMock()
         mock_rf.predict_proba.return_value = np.array([[0.4, 0.6]])
         
-        trader = EnhancedEnsembleTrader()
+        trader = AdaptiveEnsembleTrader()
         trader.models = {
             'xgb': mock_xgb,
             'rf': mock_rf

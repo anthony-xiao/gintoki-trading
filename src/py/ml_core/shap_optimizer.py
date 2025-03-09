@@ -7,11 +7,11 @@ from tqdm import tqdm
 from .data_loader import EnhancedDataLoader
 
 class EnhancedSHAPOptimizer:
-    # def __init__(self, model_path='s3://quant-trader-data-gintoki/models/regime_model.h5',
-    #              background_samples=1000):
+    def __init__(self, model_path='s3://quant-trader-data-gintoki/models/regime_model.h5',
+                 background_samples=1000):
     
     #test line
-    def __init__(self, model_path: str = 'src/py/ml_core/models/regime_model.h5', background_samples=1):
+    # def __init__(self, model_path: str = 'src/py/ml_core/models/regime_model.h5', background_samples=1):
         self.model = tf.keras.models.load_model(model_path)
         self.input_name = self.model.layers[0].name  # Get actual input name
         self.data_loader = EnhancedDataLoader()
@@ -42,12 +42,12 @@ class EnhancedSHAPOptimizer:
 
     def _load_production_background(self, n_samples):
         """Load real market data from S3"""
-        # df = self.data_loader.load_ticker_data('AMZN')
-        # sequences = self.data_loader.create_sequences(df)
-        # return sequences[-n_samples:]
+        df = self.data_loader.load_ticker_data('AMZN')
+        sequences = self.data_loader.create_sequences(df)
+        return sequences[-n_samples:]
         
         # Test line
-        return np.random.randn(n_samples, 60, 20)  # Match production shape
+        # return np.random.randn(n_samples, 60, 20)  # Match production shape
 
     def calculate_shap(self, data):
         # GradientExplainer handles batches internally

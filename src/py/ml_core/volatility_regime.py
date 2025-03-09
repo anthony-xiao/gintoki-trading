@@ -1,4 +1,5 @@
 from typing import List
+import logging
 import tensorflow as tf
 import numpy as np
 import pandas as pd
@@ -64,31 +65,53 @@ class EnhancedVolatilityDetector:
         )
         return df.dropna()
 
-    def train_model(self, tickers: List[str] = None, epochs: int = 100):
+    def train(self, tickers: List[str] = None, epochs: int = 100):
+        logging.info("⌛ Generating training sequences...")
         """Complete training implementation with data pipeline"""
-        if not tickers:
-            tickers = self.data_loader.get_available_tickers()
-        
-        # Generate training data through data loader
-        data = pd.concat([self._process_ticker(t) for t in tickers])
-        X = self.data_loader.create_sequences(data)
-        y = data['regime'].values[self.lookback:]
-        
-        # Train with checkpoints
-        self.model.fit(
-            X, y,
-            epochs=epochs,
-            batch_size=8192,
-            validation_split=0.2,
-            callbacks=[
-                ModelCheckpoint('src/py/ml_core/models/regime_model.h5', 
-                            save_best_only=True,
-                            monitor='val_accuracy'),
-                EarlyStopping(patience=5, restore_best_weights=True)
-            ]
-        )
-        # Save final weights
-        self.model.save('src/py/ml_core/models/regime_model.h5')
+        try:
+            # Generate training data through data loader
+            logging.debug("🔄 Loading ticker data...")
+            logging.debug("\u23F3 Concatenating data from %d tickers", len(tickers))
+            try:
+                processed = [self._process_ticker(t) for t in tickers]
+                if not processed:
+                    raise ValueError("No processed data returned from any tickers")
+                data = pd.concat(processed)
+                logging.info(f"\U0001F4CA Loaded {len(data)} rows from {tickers} ({len(processed)} processed datasets)")
+            except Exception as e:
+                logging.error("\U0001F4BB Data concatenation failed: %s", str(e))
+                raise
+
+            # 3. Data Preparation
+            logging.debug("🧠 Preparing training data...")
+            X = self.data_loader.create_sequences(data)
+            y = data['regime'].values[self.lookback:]
+            logging.info(f"🎯 Training data shape: {X.shape}, Labels: {y.shape}")
+            
+            # 4. Model Training
+            logging.info("\u2699\ufe0f Starting model training for %d epochs", epochs)
+            logging.debug("Training samples: %d, Validation split: 20%%", X.shape[0])
+            self.model.fit(
+                X, y,
+                epochs=epochs,
+                batch_size=8192,
+                validation_split=0.2,
+                callbacks=[
+                    ModelCheckpoint('src/py/ml_core/models/regime_model.h5', 
+                                save_best_only=True,
+                                monitor='val_accuracy'),
+                    EarlyStopping(patience=5, restore_best_weights=True)
+                ])
+            
+            logging.info("\u2705 Epoch %d/%d - Training complete", epochs, epochs)
+            logging.debug("Final training accuracy: %.2f%%", self.model.history.history['accuracy'][-1]*100)
+            logging.info("\U0001F389 Volatility training completed")
+            # Save final weights
+            self.model.save('src/py/ml_core/models/regime_model.h5')
+        except Exception as e:
+            logging.error(f"🔥 Training failed: {str(e)}", exc_info=True)
+            raise
+
 
     def _process_ticker(self, ticker: str) -> pd.DataFrame:
         """Process individual ticker data"""

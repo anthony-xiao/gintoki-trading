@@ -1,46 +1,154 @@
+# src/py/ml_core/training/train.py
 import argparse
+import pandas as pd
 import numpy as np
 import joblib
-from ..data_loader import EnhancedDataLoader
-from ..volatility_regime import EnhancedVolatilityDetector
-from ..ensemble_strategy import EnhancedEnsembleTrader
-from ..shap_optimizer import EnhancedSHAPOptimizer
-from ..model_registry import EnhancedModelRegistry
+from src.py.ml_core.data_loader import EnhancedDataLoader
+from src.py.ml_core.volatility_regime import EnhancedVolatilityDetector
+from src.py.ml_core.ensemble_strategy import AdaptiveEnsembleTrader
+from src.py.ml_core.shap_optimizer import EnhancedSHAPOptimizer
+from src.py.ml_core.transformer_trend import TransformerTrendAnalyzer
+from src.py.ml_core.model_registry import EnhancedModelRegistry
+import logging
+import time
+from logging.handlers import RotatingFileHandler
+
+# Configure logging at the top
+def configure_logging():
+    logger = logging.getLogger("training")
+    logger.setLevel(logging.INFO)
+    
+    # Console handler with progress formatting
+    console_handler = logging.StreamHandler()
+    console_format = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    console_handler.setFormatter(console_format)
+    
+    # File handler with detailed logging
+    file_handler = RotatingFileHandler(
+        'training.log', 
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_format = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(message)s"
+    )
+    file_handler.setFormatter(file_format)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+logger = configure_logging()
+
+
+
+# Configure feature columns exactly as requested
+FEATURE_COLUMNS = [
+    'open', 'high', 'low', 'close', 'volume', 'vwap',
+    'days_since_dividend', 'split_ratio', 'bid_ask_spread', 'mid_price'
+]
 
 def main():
-    parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
-    parser.add_argument('--tickers', nargs='+', default=['AMZN', 'TSLA', 'NVDA'])
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--shap-samples', type=int, default=2000)
-    args = parser.parse_args()
+    try: 
+        logger.info("🚀 Starting training pipeline")
+        start_time = time.time()
+        parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
+        parser.add_argument('--tickers', nargs='+', default=['AMZN', 'TSLA', 'NVDA'])
+        parser.add_argument('--epochs', type=int, default=100)
+        parser.add_argument('--shap-samples', type=int, default=2000)
+        parser.add_argument('--seq-length', type=int, default=60,
+                        help='Transformer sequence length (default: 60)')
+        parser.add_argument('--log-level', type=str, default='INFO',
+                      choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                      help='Logging level (default: INFO)')
+        args = parser.parse_args()
 
-    # Initialize components
-    loader = EnhancedDataLoader()
-    registry = EnhancedModelRegistry()
-    
-    # 1. Train volatility detector
-    print("Training enhanced volatility detector...")
-    detector = EnhancedVolatilityDetector()
-    detector.train(args.tickers, args.epochs)
-    registry.save_enhanced_model('regime_model.h5', 'volatility')
-    
-    # 2. SHAP feature optimization
-    print("\nPerforming SHAP feature optimization...")
-    data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
-    X = loader.create_sequences(data)
-    joblib.dump(X, 'training_data.pkl')
-    
-    optimizer = EnhancedSHAPOptimizer()
-    top_features = optimizer.optimize_features('training_data.pkl')
-    np.savez('enhanced_feature_mask.npz', mask=top_features)
-    registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
-    
-    # 3. Train ensemble strategy
-    print("\nTraining enhanced ensemble model...")
-    ensemble = EnhancedEnsembleTrader()
-    ensemble.train(args.tickers)
-    joblib.dump(ensemble, 'enhanced_ensemble.pkl')
-    registry.save_enhanced_model('enhanced_ensemble.pkl', 'ensemble')
+        # Initialize components
+        loader = EnhancedDataLoader()
+        registry = EnhancedModelRegistry()
+
+        # 1. Train volatility detector
+        logger.info("🔍 Phase 1/5: Training volatility detector...")
+        detector = EnhancedVolatilityDetector(lookback=args.seq_length)
+        logger.info(detector)
+        detector.train(args.tickers, args.epochs)
+        registry.save_enhanced_model('regime_model.h5', 'volatility')
+        logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
+
+        # 2. Prepare data for SHAP and Transformer
+        logger.info("📦 Phase 2/5: Preparing training data...")
+        data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
+        assert set(FEATURE_COLUMNS).issubset(data.columns), \
+            f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
+        
+        # Create sequences and labels
+        X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)
+        y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
+        
+        # Save for SHAP and Transformer
+        joblib.dump(X, 'training_data.pkl')
+        np.savez('transformer_data.npz', X=X, y=y)
+        logger.debug(f"Data shape: {data.shape} | Columns: {data.columns.tolist()}")
+
+        # 3. SHAP feature optimization
+        logger.info("🎯 Phase 3/5: Running SHAP optimization...")
+        optimizer = EnhancedSHAPOptimizer()
+        top_features = optimizer.optimize_features('transformer_data.npz', top_k=15)
+        np.savez('enhanced_feature_mask.npz', mask=top_features)
+        registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
+        logger.debug(f"Top features: {top_features}")
+
+        # 4. Train Transformer Trend Analyzer
+        logger.info("🧠 Phase 4/5: Training Transformer trend model...")
+        transformer = TransformerTrendAnalyzer(seq_length=args.seq_length)
+        transformer.train('transformer_data.npz', epochs=args.epochs)
+        registry.save_enhanced_model('transformer_trend.h5', 'transformer')
+
+        # 5. Train final ensemble
+        logger.info("🚢 Phase 5/5: Training adaptive ensemble...")
+        ensemble_config = {
+            'feature_columns': FEATURE_COLUMNS,
+            'volatility_model_path': 'regime_model.h5',
+            'transformer_model_path': 'transformer_trend.h5',
+            'risk_management': {
+                'max_vol': 0.015,
+                'max_spread': 0.002
+            },
+            'regime_weights': {
+                'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
+                'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
+                'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
+            }
+        }
+        
+        ensemble = AdaptiveEnsembleTrader(ensemble_config)
+        ensemble.train(data[FEATURE_COLUMNS], data['close'])
+        registry.save_enhanced_model('adaptive_ensemble.pkl', 'ensemble')
+
+        print("\nTraining completed successfully!")
+
+        # Add epoch progress logging
+        class ProgressCallback(tf.keras.callbacks.Callback):
+            def on_epoch_end(self, epoch, logs=None):
+                logger.debug(
+                    f"Transformer Epoch {epoch+1}/{args.epochs} | "
+                    f"Loss: {logs['loss']:.4f} | Val Loss: {logs['val_loss']:.4f}"
+                )
+        
+        transformer.train(
+            'transformer_data.npz', 
+            epochs=args.epochs,
+            callbacks=[ProgressCallback()]
+        )
+        
+        logger.info(f"🏁 Training completed in {time.time()-start_time:.1f} seconds")
+
+    except Exception as e:
+        logger.error(f"🚨 Critical failure: {str(e)}", exc_info=True)
+        raise
 
 if __name__ == "__main__":
     main()
