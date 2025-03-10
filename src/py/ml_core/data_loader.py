@@ -232,7 +232,7 @@ class EnhancedDataLoader:
             raise
 
 
-    def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Enrich data with corporate action features"""
         if df is None or df.empty:
             logger = logging.getLogger("training")
@@ -271,7 +271,60 @@ class EnhancedDataLoader:
             
         return df
 
-    def _process_quotes(self, ticker: str) -> pd.DataFrame:
+    def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+        """Merge corporate actions data with safety checks and fallbacks"""
+        logger = logging.getLogger("training")
+        if df.empty:
+            logger.warning(f"Empty DataFrame received for {ticker} - skipping corporate actions")
+            return df
+
+        try:
+            # Initialize default values first
+            df = df.copy()
+            df['days_since_dividend'] = 3650
+            df['split_ratio'] = 1.0
+
+            # Load corporate actions if available
+            ca = self.corporate_actions.get(ticker.upper(), pd.DataFrame())
+            if ca.empty:
+                logger.debug(f"No corporate actions found for {ticker}")
+                return df
+
+            # Validate corporate actions schema
+            required_ca_cols = {'ex_date', 'type', 'payment_date'}
+            if not required_ca_cols.issubset(ca.columns):
+                missing = required_ca_cols - set(ca.columns)
+                logger.error(f"Missing corporate action columns {missing} for {ticker}")
+                return df
+
+            # Process dividends
+            if 'dividend' in ca['type'].values:
+                try:
+                    dividends = ca[ca['type'] == 'dividend'].sort_values('ex_date')
+                    last_div_date = dividends['ex_date'].max()
+                    df['days_since_dividend'] = (df.index - last_div_date).days.clip(upper=3650)
+                    logger.debug(f"Set dividend dates for {ticker}")
+                except Exception as e:
+                    logger.error(f"Dividend processing failed: {str(e)}")
+
+            # Process splits
+            if 'split' in ca['type'].values:
+                try:
+                    splits = ca[ca['type'] == 'split'].sort_values('ex_date')
+                    if not splits.empty:
+                        last_split = splits.iloc[-1]
+                        df['split_ratio'] = last_split['ratio'] if 'ratio' in splits.columns else 1.0
+                        logger.debug(f"Applied split ratio {df['split_ratio'].iloc[0]} for {ticker}")
+                except Exception as e:
+                    logger.error(f"Split processing failed: {str(e)}")
+
+            return df
+
+        except Exception as e:
+            logger.error(f"Corporate action merge failed: {str(e)}")
+            return df  # Return original DF with default values
+
+    # def _process_quotes(self, ticker: str) -> pd.DataFrame:
         """Process raw quotes into spread features"""
         logger = logging.getLogger("training")
         logger.debug("\U0001F3C3 Starting quote processing for %s", ticker)
@@ -300,6 +353,63 @@ class EnhancedDataLoader:
             bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
             mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
         ).dropna()
+
+    def _process_quotes(self, ticker: str) -> pd.DataFrame:
+        """Process raw quote data into spread features with robust error handling"""
+        logger = logging.getLogger("training")
+        logger.info(f"📈 Processing quotes for {ticker}")
+        
+        try:
+            # Load raw quotes
+            quotes = self._load_s3_data(f'historical/{ticker}/quotes/')
+            
+            if quotes.empty:
+                logger.warning(f"⚠️ No quote data found for {ticker}")
+                return pd.DataFrame()
+
+            # Validate quote schema
+            required_columns = {
+                'bid_price', 'ask_price', 
+                'bid_size', 'ask_size', 
+                'sip_timestamp'
+            }
+            missing_cols = required_columns - set(quotes.columns)
+            
+            if missing_cols:
+                logger.error(f"🚫 Missing quote columns: {missing_cols}")
+                return pd.DataFrame()
+
+            # Convert timestamp
+            quotes['timestamp'] = pd.to_datetime(
+                quotes['sip_timestamp'], unit='ns', errors='coerce'
+            ).dropna()
+            
+            if quotes['timestamp'].isnull().any():
+                logger.warning(f"⏰ Invalid timestamps in {len(quotes)} quotes")
+
+            # Resample to 1-minute bars
+            quotes.set_index('timestamp', inplace=True)
+            
+            resampled = quotes.resample('1min').agg({
+                'bid_price': 'mean',
+                'ask_price': 'mean',
+                'bid_size': 'sum',
+                'ask_size': 'sum'
+            })
+            
+            # Calculate spread features
+            quotes_processed = resampled.assign(
+                bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
+                mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
+            ).dropna()
+            
+            logger.success(f"✅ Processed {len(quotes_processed)} quote bars")
+            return quotes_processed
+
+        except Exception as e:
+            logger.error(f"🔥 Quote processing failed: {str(e)}")
+            logger.debug("Stack trace:", exc_info=True)
+            return pd.DataFrame()  # Return empty to continue pipeline
 
     def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
         """Convert DataFrame to LSTM input sequences"""
