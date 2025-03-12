@@ -95,7 +95,16 @@ class EnhancedDataLoader:
         
         # Add quote features
         quotes = self._process_quotes(ticker)
-        return pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
+        
+        merged = pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
+
+            # Create default spread columns if missing
+        if 'bid_ask_spread' not in merged:
+            merged['bid_ask_spread'] = 0.001  # Default spread
+            merged['mid_price'] = merged['close']
+            self.logger.warning(f"Using default spreads for {ticker}")
+        # return pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
+        return merged[[col for col in self.feature_columns if col in merged.columns]]
 
 
         # In data_loader.py
@@ -146,6 +155,16 @@ class EnhancedDataLoader:
     def _load_s3_data(self, prefix: str) -> pd.DataFrame:
         """Load and concatenate Parquet files from S3 with robust error handling"""
         logger = logging.getLogger("training")
+        # Add dtype optimization
+        dtype_map = {
+            'open': 'float32',
+            'high': 'float32',
+            'low': 'float32',
+            'close': 'float32',
+            'volume': 'uint32',
+            'bid_ask_spread': 'float16'
+        }
+        
         dfs = []
         
         try:
@@ -197,7 +216,7 @@ class EnhancedDataLoader:
                             else:
                                 required_columns = set()
 
-                            df = pd.read_parquet(bio)
+                            df = pd.read_parquet(bio, dtype=dtype_map)
                             # Validate schema for specific data types
                             if required_columns:
                                 if not required_columns.issubset(df.columns):

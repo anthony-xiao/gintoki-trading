@@ -51,6 +51,12 @@ class EnhancedVolatilityDetector:
 
     def create_labels(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate regime labels with enhanced criteria"""
+
+        required_cols = ['bid_ask_spread', 'close', 'high', 'low']
+        for col in required_cols:
+            if col not in df.columns:
+                df[col] = 0.0  # Default value
+    
         df = self._calculate_event_volatility(df)
         
         # Regime conditions
