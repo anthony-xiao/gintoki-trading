@@ -155,16 +155,6 @@ class EnhancedDataLoader:
     def _load_s3_data(self, prefix: str) -> pd.DataFrame:
         """Load and concatenate Parquet files from S3 with robust error handling"""
         logger = logging.getLogger("training")
-        # Add dtype optimization
-        dtype_map = {
-            'open': 'float32',
-            'high': 'float32',
-            'low': 'float32',
-            'close': 'float32',
-            'volume': 'uint32',
-            'bid_ask_spread': 'float16'
-        }
-        
         dfs = []
         
         try:
@@ -216,7 +206,7 @@ class EnhancedDataLoader:
                             else:
                                 required_columns = set()
 
-                            df = pd.read_parquet(bio, dtype=dtype_map)
+                            df = pd.read_parquet(bio)
                             # Validate schema for specific data types
                             if required_columns:
                                 if not required_columns.issubset(df.columns):
