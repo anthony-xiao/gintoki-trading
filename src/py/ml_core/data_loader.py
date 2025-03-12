@@ -102,7 +102,7 @@ class EnhancedDataLoader:
         if 'bid_ask_spread' not in merged:
             merged['bid_ask_spread'] = 0.001  # Default spread
             merged['mid_price'] = merged['close']
-            self.logger.warning(f"Using default spreads for {ticker}")
+            logger.warning(f"Using default spreads for {ticker}")
         # return pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
         return merged[[col for col in self.feature_columns if col in merged.columns]]
 
