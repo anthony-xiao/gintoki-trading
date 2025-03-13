@@ -213,7 +213,15 @@ class EnhancedDataLoader:
                                     missing = required_columns - set(df.columns)
                                     raise ValueError(f"Missing columns in {key}: {missing}")
                             
+                            # Downsample if needed
+                            if len(df) > 1_000_000:
+                                df = df.sample(1_000_000)
+                            
                             dfs.append(df)
+
+                             # Clear memory every 10 files
+                            if len(dfs) % 10 == 0:
+                                pd.concat(dfs, ignore_index=True).reset_index(drop=True)
                                 
                             logger.info(f"✅ Successfully loaded {len(df)} rows from {key}")
 
