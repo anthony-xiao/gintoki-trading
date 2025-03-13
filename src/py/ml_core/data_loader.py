@@ -208,7 +208,6 @@ class EnhancedDataLoader:
 
                             df = pd.read_parquet(bio)
 
-                            df = df.astype(required_columns)
 
                             # Validate schema for specific data types
                             if required_columns:
@@ -216,6 +215,19 @@ class EnhancedDataLoader:
                                     missing = required_columns - set(df.columns)
                                     raise ValueError(f"Missing columns in {key}: {missing}")
                             
+                            # With EXPLICIT dtype mapping:
+                            dtype_map = {
+                                'bid_ask_spread': 'float16',
+                                'mid_price': 'float32',
+                                'volume': 'uint32',
+                                'high': 'float32',
+                                'low': 'float32',
+                                'open': 'float32',
+                                'close': 'float32',
+                                'vwap': 'float32'
+                            }
+                            df = df.astype(dtype_map)
+
                             # Downsample if needed
                             if len(df) > 1_000_000:
                                 df = df.sample(1_000_000)
