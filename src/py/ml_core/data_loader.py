@@ -202,18 +202,14 @@ class EnhancedDataLoader:
                             if 'aggregates' in key:
                                 required_columns = {'open', 'high', 'low', 'close', 'volume', 'vwap'}
                             elif 'quotes' in key:
-                                required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
+                                required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size', 'bid_ask_spread'}
                             else:
                                 required_columns = set()
 
                             df = pd.read_parquet(bio)
 
-                            df = df.astype({
-                                    'bid_ask_spread': 'float16',
-                                    'mid_price': 'float32',
-                                    'volume': 'uint32'
-                            })
-                            
+                            df = df.astype(required_columns)
+
                             # Validate schema for specific data types
                             if required_columns:
                                 if not required_columns.issubset(df.columns):
