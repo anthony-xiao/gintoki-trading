@@ -213,20 +213,31 @@ class EnhancedDataLoader:
                             if required_columns:
                                 if not required_columns.issubset(df.columns):
                                     missing = required_columns - set(df.columns)
-                                    raise ValueError(f"Missing columns in {key}: {missing}")
-                            
-                            # With EXPLICIT dtype mapping:
-                            dtype_map = {
+                                    raise ValueError(f"Missing columns in {key}: {sorted(missing)}")
+
+                            # Split dtype mappings by data type
+                            ORDERBOOK_DTYPES = {
                                 'bid_ask_spread': 'float16',
                                 'mid_price': 'float32',
-                                'volume': 'uint32',
+                                'bid_size': 'uint32',
+                                'ask_size': 'uint32'
+                            }
+
+                            OHLCV_DTYPES = {
+                                'open': 'float32',
                                 'high': 'float32',
                                 'low': 'float32',
-                                'open': 'float32',
                                 'close': 'float32',
+                                'volume': 'uint32',
                                 'vwap': 'float32'
                             }
-                            df = df.astype(dtype_map)
+
+                            # After reading the DF (line 229):
+                            if 'bid_ask_spread' in df.columns:  # Order book data
+                                df = df.astype(ORDERBOOK_DTYPES)
+                            else:  # OHLCV data
+                                df = df.astype({k:v for k,v in OHLCV_DTYPES.items() if k in df.columns})
+                            
 
                             # Downsample if needed
                             if len(df) > 1_000_000:
