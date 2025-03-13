@@ -206,14 +206,14 @@ class EnhancedDataLoader:
                             else:
                                 required_columns = set()
 
-                            df = pd.read_parquet(
-                                bio,
-                                dtype={
+                            df = pd.read_parquet(bio)
+
+                            df = df.astype({
                                     'bid_ask_spread': 'float16',
                                     'mid_price': 'float32',
                                     'volume': 'uint32'
-                                }
-                            )
+                            })
+                            
                             # Validate schema for specific data types
                             if required_columns:
                                 if not required_columns.issubset(df.columns):
