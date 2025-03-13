@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 from dotenv import load_dotenv
@@ -228,7 +229,7 @@ class EnhancedDataLoader:
                                 'high': 'float32',
                                 'low': 'float32',
                                 'close': 'float32',
-                                'volume': 'uint32',
+                                'volume': 'uint16',
                                 'vwap': 'float32'
                             }
 
@@ -244,10 +245,14 @@ class EnhancedDataLoader:
                                 df = df.sample(1_000_000)
                             
                             dfs.append(df)
+                            
+                            del df  # Explicit memory release
+                            gc.collect()
+                            df = pd.concat(dfs)
 
                              # Clear memory every 10 files
-                            if len(dfs) % 10 == 0:
-                                pd.concat(dfs, ignore_index=True).reset_index(drop=True)
+                            # if len(dfs) % 10 == 0:
+                            #     pd.concat(dfs, ignore_index=True).reset_index(drop=True)
                                 
                             logger.info(f"✅ Successfully loaded {len(df)} rows from {key}")
 
