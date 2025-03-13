@@ -202,7 +202,7 @@ class EnhancedDataLoader:
                             if 'aggregates' in key:
                                 required_columns = {'open', 'high', 'low', 'close', 'volume', 'vwap'}
                             elif 'quotes' in key:
-                                required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size', 'bid_ask_spread'}
+                                required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
                             else:
                                 required_columns = set()
 
@@ -217,7 +217,6 @@ class EnhancedDataLoader:
 
                             # Split dtype mappings by data type
                             ORDERBOOK_DTYPES = {
-                                'bid_ask_spread': 'float16',
                                 'mid_price': 'float32',
                                 'bid_size': 'uint32',
                                 'ask_size': 'uint32'

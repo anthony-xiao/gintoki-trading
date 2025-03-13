@@ -91,3 +91,6 @@ graph TD
     F --> G[Alpaca Execution Engine]
     G --> H[Performance Monitor]
     H --> D1  <!-- Feedback loop -->
+
+
+Took out 'bid_ask_spread' as a required column in data loader. may need to add it back Use Corwin-Schultz estimator from OHLC when quotes are missing:
