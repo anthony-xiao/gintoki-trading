@@ -217,9 +217,10 @@ class EnhancedDataLoader:
 
                             # Split dtype mappings by data type
                             ORDERBOOK_DTYPES = {
-                                'mid_price': 'float32',
-                                'bid_size': 'uint32',
-                                'ask_size': 'uint32'
+                                'bid_price': 'float32',
+                                'ask_price': 'float32',
+                                'bid_size': 'uint16',
+                                'ask_size': 'uint16'
                             }
 
                             OHLCV_DTYPES = {
