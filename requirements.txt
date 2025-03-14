@@ -10,8 +10,8 @@ python-dotenv>=1.0.0
 protobuf==3.20.3  # Required for TensorFlow compatibility
 
 # Data Processing & I/O
-pandas>=2.1.0
-numpy>=1.26.0
+pandas==2.1.4
+numpy==1.26.3
 pyarrow>=14.0.0
 python-dateutil>=2.8.0
 
@@ -33,9 +33,10 @@ backtesting==0.3.3
 
 
 # Core Machine Learning
-tensorflow>=2.15.0
+tensorflow==2.15.0
 scikit-learn==1.3.2
 xgboost==1.7.6
-shap>=0.45.0
+shap==0.45.0
 
-
+keras==3.1.1
+pyopenssl==23.2.0
