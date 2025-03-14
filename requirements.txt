@@ -1,7 +1,7 @@
 python-socketio==5.11.2
 qiskit-finance==0.4.1
 # ml_dtypes>=0.3.1
-tensorstore>=0.1.69
+# tensorstore>=0.1.69
 requests>=2.31.0
 pytz>=2023.3
 python-dotenv>=1.0.0
