@@ -451,7 +451,7 @@ class EnhancedDataLoader:
                 mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
             ).dropna()
             
-            logger.success(f"✅ Processed {len(quotes_processed)} quote bars")
+            logger.info(f"✅ Processed {len(quotes_processed)} quote bars")
             return quotes_processed
 
         except Exception as e:
