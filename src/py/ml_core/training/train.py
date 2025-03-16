@@ -74,13 +74,13 @@ def main():
         # 1. Train volatility detector
         logger.info("🔍 Phase 1/5: Training volatility detector...")
         detector = EnhancedVolatilityDetector(lookback=args.seq_length)
+        logger.info(detector)
         detector.train(args.tickers, args.epochs)
-
-        model_path = 'src/py/ml_core/models/regime_model.h5'
-        if not os.path.exists(model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {model_path}")
-        registry.save_enhanced_model(model_path, 'volatility')
+        regime_model_model_path = 'src/py/ml_core/models/regime_model.h5'
+        if not os.path.exists(regime_model_model_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(regime_model_model_path)}")
+            raise FileNotFoundError(f"Volatility model not generated at {regime_model_model_path}")
+        registry.save_enhanced_model(regime_model_model_path, 'volatility')
         logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
 
         # 2. Prepare data for SHAP and Transformer
@@ -110,14 +110,19 @@ def main():
         logger.info("🧠 Phase 4/5: Training Transformer trend model...")
         transformer = TransformerTrendAnalyzer(seq_length=args.seq_length)
         transformer.train('transformer_data.npz', epochs=args.epochs)
-        registry.save_enhanced_model('transformer_trend.h5', 'transformer')
+
+        transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'
+        if not os.path.exists(transformer_trend_model_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(transformer_trend_model_path)}")
+            raise FileNotFoundError(f"Volatility model not generated at {transformer_trend_model_path}")
+        registry.save_enhanced_model(transformer_trend_model_path, 'transformer')
 
         # 5. Train final ensemble
         logger.info("🚢 Phase 5/5: Training adaptive ensemble...")
         ensemble_config = {
             'feature_columns': FEATURE_COLUMNS,
-            'volatility_model_path': 'regime_model.h5',
-            'transformer_model_path': 'transformer_trend.h5',
+            'volatility_model_path': 'src/py/ml_core/models/regime_model.h5',
+            'transformer_model_path': 'src/py/ml_core/models/transformer_trend.h5',
             'risk_management': {
                 'max_vol': 0.015,
                 'max_spread': 0.002
@@ -129,9 +134,18 @@ def main():
             }
         }
         
+        # Initialize and process data through the ensemble
         ensemble = AdaptiveEnsembleTrader(ensemble_config)
-        ensemble.train(data[FEATURE_COLUMNS], data['close'])
+
+        # 1. Preprocess the raw data using the ensemble's processor
+        processed_data = ensemble.preprocess_data(data)
+
+        # 2. Generate training signals from processed data
+        signals = ensemble.calculate_signals(processed_data)
+
+        # 3. Save the configured ensemble
         registry.save_enhanced_model('adaptive_ensemble.pkl', 'ensemble')
+
 
         print("\nTraining completed successfully!")
 

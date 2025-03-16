@@ -2,6 +2,8 @@ import tensorflow as tf
 import numpy as np
 from tensorflow.keras.layers import LayerNormalization, MultiHeadAttention
 from src.py.ml_core.data_loader import EnhancedDataLoader
+import logging
+import os
 
 class TransformerTrendAnalyzer:
     def __init__(self, seq_length=60, d_model=64, num_heads=8):
@@ -52,7 +54,12 @@ class TransformerTrendAnalyzer:
                 )
             ]
         )
-    
+        logging.info("\U0001F389 Volatility training completed")
+        # Save final weights
+        model_path = 'src/py/ml_core/models/transformer_trend.h5'  # Save in current directory
+        self.model.save(model_path)
+        logging.info(f"Model saved to {os.path.abspath(model_path)}")
+
     def predict_trend_strength(self, sequences):
         """Predict normalized trend strength (-1 to 1)"""
         return self.model.predict(sequences, verbose=0)
