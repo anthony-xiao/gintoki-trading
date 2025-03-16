@@ -99,7 +99,13 @@ class EnhancedDataLoader:
         # Add quote features
         quotes = self._process_quotes(ticker)
         
-        merged = pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
+        merged = pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='inner')
+
+        # After merging in load_ticker_data()
+        logger.info(f"📊 Post-merge stats for {ticker}:")
+        logger.info(f" - Rows: {len(merged)}")
+        logger.info(f" - NaNs: {merged.isna().sum().sum()}")
+        logger.info(f" - Date range: {merged.index.min()} to {merged.index.max()}")
 
             # Create default spread columns if missing
         if 'bid_ask_spread' not in merged:
