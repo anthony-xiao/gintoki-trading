@@ -283,7 +283,7 @@ class EnhancedDataLoader:
         
         s3 = boto3.client('s3',
                         region_name=os.getenv('AWS_DEFAULT_REGION', 'us-west-2'),
-                        config=Config(signature_version='s3v4'))
+                        config=Config(signature_version='s3v4', max_pool_connections=50))
         
         # Get all Parquet keys first
         keys = []
@@ -292,6 +292,7 @@ class EnhancedDataLoader:
             for obj in page.get('Contents', []):
                 key = obj['Key']
                 if key.endswith('/') or not key.lower().endswith('.parquet'):
+                    logger.debug(f"📦 Processing S3 object: {obj['Key']} (Size: {obj['Size']} bytes)")
                     continue
                 keys.append(key)
         
@@ -349,7 +350,7 @@ class EnhancedDataLoader:
 
         # Parallel execution with memory management
         dfs = []
-        with ThreadPoolExecutor(max_workers=16) as executor:
+        with ThreadPoolExecutor(max_workers=30) as executor:
             futures = [executor.submit(process_key, key) for key in keys]
             for future in futures:
                 df = future.result()
