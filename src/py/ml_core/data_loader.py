@@ -359,6 +359,7 @@ class EnhancedDataLoader:
                     # Maintain memory cleanup
                     if len(dfs) % 10 == 0:
                         pd.concat(dfs).reset_index(drop=True)
+                        del dfs
                         gc.collect()
         
         final_df = pd.concat(dfs, ignore_index=False).sort_index()
