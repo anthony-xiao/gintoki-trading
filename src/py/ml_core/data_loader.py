@@ -379,14 +379,17 @@ class EnhancedDataLoader:
         return final_df 
 
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """TF-optimized sequence generation"""
+        """Create uniform-length sequences with strict windowing"""
         ds = tf.data.Dataset.from_tensor_slices(data[self.feature_columns].values)
+        # Enforce exact window size and convert to numpy-friendly format
         ds = ds.window(window, shift=1, drop_remainder=True)
-        ds = ds.flat_map(lambda w: w.batch(window))
+        ds = ds.flat_map(lambda w: w.batch(window))  # Convert to tensors
+        ds = ds.map(lambda x: tf.ensure_shape(x, [window, len(self.feature_columns)]))
+        
         return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
 
 
-    def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+    # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Merge corporate actions data with safety checks and fallbacks"""
         logger = logging.getLogger("training")
         if df.empty:
@@ -439,35 +442,60 @@ class EnhancedDataLoader:
             logger.error(f"Corporate action merge failed: {str(e)}")
             return df  # Return original DF with default values
 
-    # def _process_quotes(self, ticker: str) -> pd.DataFrame:
-        """Process raw quotes into spread features"""
+    def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
+        """Merge corporate actions data with safety checks and fallbacks"""
         logger = logging.getLogger("training")
-        logger.debug("\U0001F3C3 Starting quote processing for %s", ticker)
+        if df.empty:
+            logger.warning(f"Empty DataFrame received for {ticker} - skipping corporate actions")
+            return df
+
         try:
-            quotes = self._load_s3_data(f'historical/{ticker}/quotes/')
+            # Initialize default values first
+            df = df.copy()
+            df['days_since_dividend'] = 3650
+            df['split_ratio'] = 1.0
+
+            # Load corporate actions if available
+            ca = self.corporate_actions.get(ticker.upper(), pd.DataFrame())
+            if ca.empty:
+                logger.debug(f"No corporate actions found for {ticker}")
+                return df
+
+            # Add missing columns with defaults instead of erroring
+            required_ca_cols = {'ex_date', 'type', 'payment_date', 'ratio'}
+            for col in required_ca_cols:
+                if col not in ca.columns:
+                    ca[col] = pd.NaT if 'date' in col else (1.0 if col == 'ratio' else np.nan)
+                    logger.warning(f"Added missing corporate action column {col} with defaults for {ticker}")
+
+            # Process dividends
+            if 'dividend' in ca['type'].values:
+                try:
+                    dividends = ca[ca['type'] == 'dividend'].sort_values('ex_date').dropna(subset=['ex_date'])
+                    if not dividends.empty:
+                        last_div_date = dividends['ex_date'].max()
+                        df['days_since_dividend'] = (df.index - last_div_date).dt.days.clip(upper=3650)
+                        logger.debug(f"Set dividend dates for {ticker}")
+                except Exception as e:
+                    logger.error(f"Dividend processing failed: {str(e)}")
+
+            # Process splits
+            if 'split' in ca['type'].values:
+                try:
+                    splits = ca[ca['type'] == 'split'].sort_values('ex_date').dropna(subset=['ex_date'])
+                    if not splits.empty:
+                        last_split_date = splits['ex_date'].max()
+                        df.loc[df.index >= last_split_date, 'split_ratio'] = splits['ratio'].iloc[-1]
+                except Exception as e:
+                    logger.error(f"Split processing failed: {str(e)}")
+
+            return df.fillna({'days_since_dividend': 3650, 'split_ratio': 1.0})
+
         except Exception as e:
-            logger.error("\U0001F4DB Quote loading failed for %s: %s", ticker, str(e))
-            raise
+            logger.error(f"Corporate action merge failed: {str(e)}")
+            return df  # Return DF with safe defaults
 
-        if quotes.empty:
-            return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size'], 
-                            index=pd.DatetimeIndex([]))
-        
-        required_quote_cols = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
-        if not required_quote_cols.issubset(quotes.columns):
-            missing = required_quote_cols - set(quotes.columns)
-            logger.error(f"Missing quote columns: {missing}")
-            return pd.DataFrame()
 
-        return quotes.resample('1min').agg({
-            'bid_price': 'mean',
-            'ask_price': 'mean',
-            'bid_size': 'sum', 
-            'ask_size': 'sum'
-        }).assign(
-            bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
-            mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
-        ).dropna()
 
     def _process_quotes(self, ticker: str) -> pd.DataFrame:
         """Process raw quote data into spread features with robust error handling"""

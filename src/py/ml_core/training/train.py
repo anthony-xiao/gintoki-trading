@@ -90,7 +90,7 @@ def main():
             f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
         # Create sequences and labels
         tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=args.seq_length)
-        X = np.array(list(tf_dataset.as_numpy_iterator()))
+        X = np.stack([x.numpy() for x in tf_dataset], axis=0)
         y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
 
         # X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)

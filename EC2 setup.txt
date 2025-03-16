@@ -35,8 +35,8 @@ sudo dnf -y install cudnn
 sudo dnf -y install cudnn-cuda-12
 
 # Configure environment
-echo 'export PATH=/usr/local/cuda-12.2/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
 source ~/.bashrc
 
 # Verify installation
