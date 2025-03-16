@@ -378,7 +378,7 @@ class EnhancedDataLoader:
         logger.info(f"✅ Loaded {len(final_df)} total records")
         return final_df 
 
-    def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
+    # def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
         """Create uniform-length sequences with strict windowing"""
         ds = tf.data.Dataset.from_tensor_slices(data[self.feature_columns].values)
         # Enforce exact window size and convert to numpy-friendly format
@@ -387,6 +387,24 @@ class EnhancedDataLoader:
         ds = ds.map(lambda x: tf.ensure_shape(x, [window, len(self.feature_columns)]))
         
         return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+    
+    def create_tf_dataset(self, data: pd.DataFrame, window: int) -> tf.data.Dataset:
+        """Create validated sequences with strict shape enforcement"""
+        ds = tf.data.Dataset.from_generator(
+            lambda: self._sequence_generator(data, window),
+            output_signature=tf.TensorSpec(
+                shape=(window, len(self.feature_columns)),
+                dtype=tf.float32
+            )
+        )
+        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+    
+    def _sequence_generator(self, data, window):
+        """Yield only valid sequences"""
+        for i in range(window, len(data)):
+            seq = data.iloc[i-window:i][self.feature_columns].values
+            if seq.shape == (window, len(self.feature_columns)):
+                yield seq
 
 
     # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
@@ -554,9 +572,12 @@ class EnhancedDataLoader:
             logger.debug("Stack trace:", exc_info=True)
             return pd.DataFrame()  # Return empty to continue pipeline
 
-    def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
-        """Convert DataFrame to LSTM input sequences"""
-        return np.array([
-            data.iloc[i-window:i][self.feature_columns].values
-            for i in range(window, len(data))
-        ])
+    def create_sequences(self, data: pd.DataFrame, window: int) -> np.ndarray:
+        """Create strictly uniform sequences"""
+        sequences = []
+        for i in range(window, len(data)):
+            seq = data.iloc[i-window:i][self.feature_columns].values
+            if seq.shape != (window, len(self.feature_columns)):  # New validation
+                continue  # Skip invalid sequences
+            sequences.append(seq)
+        return np.array(sequences, dtype=np.float32)  # Explicit dtype
