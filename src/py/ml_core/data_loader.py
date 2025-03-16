@@ -401,10 +401,23 @@ class EnhancedDataLoader:
     
     def _sequence_generator(self, data, window):
         """Yield only valid sequences"""
+        # Validate input data exists
+        if data is None or len(data) == 0:
+            raise ValueError("Input data cannot be None or empty for sequence generation")
+        
+        # Get feature count once
+        num_features = len(self.feature_columns)
+        
         for i in range(window, len(data)):
+            # Use 'data' instead of potential 'df' typo
             seq = data.iloc[i-window:i][self.feature_columns].values
-            if seq.shape == (window, len(self.feature_columns)):
-                yield seq
+            
+            # Add debug logging
+            if seq.shape != (window, num_features):
+                logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
+                continue
+                
+            yield seq
 
 
     # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
