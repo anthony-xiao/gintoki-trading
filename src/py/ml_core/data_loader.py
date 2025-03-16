@@ -581,3 +581,4 @@ class EnhancedDataLoader:
                 continue  # Skip invalid sequences
             sequences.append(seq)
         return np.array(sequences, dtype=np.float32)  # Explicit dtype
+
