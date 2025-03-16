@@ -398,7 +398,7 @@ class EnhancedDataLoader:
             )
         )
         return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
-    
+    # 
     def _sequence_generator(self, data, window):
         """Yield only valid sequences"""
         # Validate input data exists
@@ -421,57 +421,57 @@ class EnhancedDataLoader:
 
 
     # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        """Merge corporate actions data with safety checks and fallbacks"""
-        logger = logging.getLogger("training")
-        if df.empty:
-            logger.warning(f"Empty DataFrame received for {ticker} - skipping corporate actions")
-            return df
+        # """Merge corporate actions data with safety checks and fallbacks"""
+        # logger = logging.getLogger("training")
+        # if df.empty:
+        #     logger.warning(f"Empty DataFrame received for {ticker} - skipping corporate actions")
+        #     return df
 
-        try:
-            # Initialize default values first
-            df = df.copy()
-            df['days_since_dividend'] = 3650
-            df['split_ratio'] = 1.0
+        # try:
+        #     # Initialize default values first
+        #     df = df.copy()
+        #     df['days_since_dividend'] = 3650
+        #     df['split_ratio'] = 1.0
 
-            # Load corporate actions if available
-            ca = self.corporate_actions.get(ticker.upper(), pd.DataFrame())
-            if ca.empty:
-                logger.debug(f"No corporate actions found for {ticker}")
-                return df
+        #     # Load corporate actions if available
+        #     ca = self.corporate_actions.get(ticker.upper(), pd.DataFrame())
+        #     if ca.empty:
+        #         logger.debug(f"No corporate actions found for {ticker}")
+        #         return df
 
-            # Validate corporate actions schema
-            required_ca_cols = {'ex_date', 'type', 'payment_date'}
-            if not required_ca_cols.issubset(ca.columns):
-                missing = required_ca_cols - set(ca.columns)
-                logger.error(f"Missing corporate action columns {missing} for {ticker}")
-                return df
+        #     # Validate corporate actions schema
+        #     required_ca_cols = {'ex_date', 'type', 'payment_date'}
+        #     if not required_ca_cols.issubset(ca.columns):
+        #         missing = required_ca_cols - set(ca.columns)
+        #         logger.error(f"Missing corporate action columns {missing} for {ticker}")
+        #         return df
 
-            # Process dividends
-            if 'dividend' in ca['type'].values:
-                try:
-                    dividends = ca[ca['type'] == 'dividend'].sort_values('ex_date')
-                    last_div_date = dividends['ex_date'].max()
-                    df['days_since_dividend'] = (df.index - last_div_date).days.clip(upper=3650)
-                    logger.debug(f"Set dividend dates for {ticker}")
-                except Exception as e:
-                    logger.error(f"Dividend processing failed: {str(e)}")
+        #     # Process dividends
+        #     if 'dividend' in ca['type'].values:
+        #         try:
+        #             dividends = ca[ca['type'] == 'dividend'].sort_values('ex_date')
+        #             last_div_date = dividends['ex_date'].max()
+        #             df['days_since_dividend'] = (df.index - last_div_date).days.clip(upper=3650)
+        #             logger.debug(f"Set dividend dates for {ticker}")
+        #         except Exception as e:
+        #             logger.error(f"Dividend processing failed: {str(e)}")
 
-            # Process splits
-            if 'split' in ca['type'].values:
-                try:
-                    splits = ca[ca['type'] == 'split'].sort_values('ex_date')
-                    if not splits.empty:
-                        last_split = splits.iloc[-1]
-                        df['split_ratio'] = last_split['ratio'] if 'ratio' in splits.columns else 1.0
-                        logger.debug(f"Applied split ratio {df['split_ratio'].iloc[0]} for {ticker}")
-                except Exception as e:
-                    logger.error(f"Split processing failed: {str(e)}")
+        #     # Process splits
+        #     if 'split' in ca['type'].values:
+        #         try:
+        #             splits = ca[ca['type'] == 'split'].sort_values('ex_date')
+        #             if not splits.empty:
+        #                 last_split = splits.iloc[-1]
+        #                 df['split_ratio'] = last_split['ratio'] if 'ratio' in splits.columns else 1.0
+        #                 logger.debug(f"Applied split ratio {df['split_ratio'].iloc[0]} for {ticker}")
+        #         except Exception as e:
+        #             logger.error(f"Split processing failed: {str(e)}")
 
-            return df
+        #     return df
 
-        except Exception as e:
-            logger.error(f"Corporate action merge failed: {str(e)}")
-            return df  # Return original DF with default values
+        # except Exception as e:
+        #     logger.error(f"Corporate action merge failed: {str(e)}")
+        #     return df  # Return original DF with default values
 
     def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Merge corporate actions data with safety checks and fallbacks"""
