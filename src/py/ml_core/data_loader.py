@@ -388,7 +388,7 @@ class EnhancedDataLoader:
         
         return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
     
-    def create_tf_dataset(self, data: pd.DataFrame, window: int) -> tf.data.Dataset:
+    def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
         """Create validated sequences with strict shape enforcement"""
         ds = tf.data.Dataset.from_generator(
             lambda: self._sequence_generator(data, window),
