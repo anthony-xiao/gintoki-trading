@@ -1,4 +1,5 @@
 from typing import List
+import os
 import logging
 import tensorflow as tf
 import numpy as np
@@ -113,7 +114,9 @@ class EnhancedVolatilityDetector:
             logging.debug("Final training accuracy: %.2f%%", self.model.history.history['accuracy'][-1]*100)
             logging.info("\U0001F389 Volatility training completed")
             # Save final weights
-            self.model.save('src/py/ml_core/models/regime_model.h5')
+            model_path = 'src/py/ml_core/models/regime_model.h5'  # Save in current directory
+            self.model.save(model_path)
+            logging.info(f"Model saved to {os.path.abspath(model_path)}")
         except Exception as e:
             logging.error(f"🔥 Training failed: {str(e)}", exc_info=True)
             raise

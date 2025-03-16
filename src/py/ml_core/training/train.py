@@ -1,5 +1,6 @@
 # src/py/ml_core/training/train.py
 import argparse
+import os
 import pandas as pd
 import numpy as np
 import joblib
@@ -73,9 +74,13 @@ def main():
         # 1. Train volatility detector
         logger.info("🔍 Phase 1/5: Training volatility detector...")
         detector = EnhancedVolatilityDetector(lookback=args.seq_length)
-        logger.info(detector)
         detector.train(args.tickers, args.epochs)
-        registry.save_enhanced_model('regime_model.h5', 'volatility')
+
+        model_path = 'src/py/ml_core/models/regime_model.h5'
+        if not os.path.exists(model_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(model_path)}")
+            raise FileNotFoundError(f"Volatility model not generated at {model_path}")
+        registry.save_enhanced_model(model_path, 'volatility')
         logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
 
         # 2. Prepare data for SHAP and Transformer
