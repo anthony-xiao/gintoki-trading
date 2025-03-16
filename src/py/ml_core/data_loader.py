@@ -99,7 +99,14 @@ class EnhancedDataLoader:
         # Add quote features
         quotes = self._process_quotes(ticker)
         
-        merged = pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='inner')
+        merged = pd.merge(
+            ohlcv,
+            quotes,
+            left_index=True,
+            right_index=True,
+            how='outer',
+            sort=True
+        ).ffill().dropna()  # Forward fill and remove remaining NaNs
 
         # After merging in load_ticker_data()
         logger.info(f"📊 Post-merge stats for {ticker}:")
