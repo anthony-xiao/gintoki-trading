@@ -10,6 +10,8 @@ import numpy as np
 from io import BytesIO
 from tqdm import tqdm
 from typing import List, Dict
+from concurrent.futures import ThreadPoolExecutor
+import tensorflow as tf
 
 
 load_dotenv()
@@ -107,55 +109,10 @@ class EnhancedDataLoader:
         # return pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
         return merged[[col for col in self.feature_columns if col in merged.columns]]
 
-
-        # In data_loader.py
     # def _load_s3_data(self, prefix: str) -> pd.DataFrame:
-        """Load and concatenate parquet files from S3"""
-        s3_uri = f"s3://{self.bucket}/{prefix}"
-        logger = logging.getLogger("training")
-        logger.debug(f"📂 Entering _load_s3_data for prefix: {s3_uri}")
-
-        dfs = []
-        paginator = self.s3.get_paginator('list_objects_v2')
-        logger.debug(f"🔄 Starting S3 pagination for {prefix}")
-        logger.debug(f"Using S3 bucket: {self.bucket}")
-        logger.debug(f"Loading data from path: {prefix}")
-        page_iterator = paginator.paginate(Bucket=self.bucket, Prefix=prefix)
-        logger.debug("\U0001F680 Established S3 connection successfully, starting data retrieval")
-        try:
-
-            for page in page_iterator:
-                logger.debug(f"📄 Processing page with {len(page.get('Contents', []))} objects")
-                # Fix 1: Handle empty pages gracefully
-                objects = page.get('Contents', [])
-                logger.debug(f"test log {objects}")
-                if not objects:  # Check if objects list is empty
-                    logger.warning(f"⚠️ Empty page for prefix {s3_uri},{page}")
-                    continue  # Skip empty pages but don't warn
-
-                # Fix 2: Process even if 'Contents' key exists but list is empty
-                for obj in objects:
-                    if obj['Key'].endswith('.parquet'):
-                        logger.debug(f"📦 Processing S3 object: {obj['Key']} (Size: {obj['Size']} bytes)")
-                        response = self.s3.get_object(Bucket=self.bucket, Key=obj['Key'])
-                        dfs.append(pd.read_parquet(BytesIO(response['Body'].read())))
-                    logger.error(f"\U0001F6A8 CRITICAL - No parquet files found in {prefix}")
-                    raise ValueError(f"No data files found at s3://{self.bucket}/{prefix}")
-                
-                combined = pd.concat(dfs).sort_index()
-                logger.info("\U0001F4C8 Loaded %d files with %d total rows from %s", 
-                            len(dfs), len(combined), prefix)
-                if combined.empty:
-                    logger.error("\U0001F4A5 Concatenated data is empty for %s", prefix)
-                    raise ValueError("Empty data after concatenation")
-                return combined
-        except Exception as e:
-            logger.error(f"S3 load error: {str(e)}")
-            raise
-
-    def _load_s3_data(self, prefix: str) -> pd.DataFrame:
         """Load and concatenate Parquet files from S3 with robust error handling"""
         logger = logging.getLogger("training")
+        logger.debug(f"🔎 Loading from s3://{self.bucket}/{prefix}")
         dfs = []
         
         try:
@@ -318,6 +275,102 @@ class EnhancedDataLoader:
             df['split_ratio'] = 1.0
             
         return df
+
+    def _load_s3_data(self, prefix: str) -> pd.DataFrame:
+        """Parallel S3 loading with validation and memory management"""
+        logger = logging.getLogger("training")
+        logger.debug(f"🔎 Loading from s3://{self.bucket}/{prefix}")
+        
+        s3 = boto3.client('s3',
+                        region_name=os.getenv('AWS_DEFAULT_REGION', 'us-west-2'),
+                        config=Config(signature_version='s3v4'))
+        
+        # Get all Parquet keys first
+        keys = []
+        paginator = s3.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=self.bucket, Prefix=prefix):
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                if key.endswith('/') or not key.lower().endswith('.parquet'):
+                    continue
+                keys.append(key)
+        
+        # Parallel processing function with validation
+        def process_key(key):
+            try:
+                logger.info(f"📥 Downloading {key}")
+                response = s3.get_object(Bucket=self.bucket, Key=key)
+                bio = BytesIO(response['Body'].read())
+
+                # Split dtype mappings by data type
+                ORDERBOOK_DTYPES = {
+                    'bid_price': 'float32',
+                    'ask_price': 'float32',
+                    'bid_size': 'uint16',
+                    'ask_size': 'uint16'
+                }
+
+                OHLCV_DTYPES = {
+                    'open': 'float32',
+                    'high': 'float32',
+                    'low': 'float32',
+                    'close': 'float32',
+                    'volume': 'uint16',
+                    'vwap': 'float32'
+                }
+
+                # Maintain original validation logic
+                if 'aggregates' in key:
+                    required_columns = {'open', 'high', 'low', 'close', 'volume', 'vwap'}
+                    dtypes = OHLCV_DTYPES
+                elif 'quotes' in key:
+                    required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
+                    dtypes = ORDERBOOK_DTYPES
+                else:
+                    required_columns = set()
+                    dtypes = {}
+
+                df = pd.read_parquet(bio)
+                if required_columns and not required_columns.issubset(df.columns):
+                    raise ValueError(f"Missing columns: {required_columns - set(df.columns)}")
+                    
+                # Apply dtype conversions
+                df = df.astype({k:v for k,v in dtypes.items() if k in df.columns})
+                
+                # Downsample large files
+                if len(df) > 1_000_000:
+                    df = df.sample(1_000_000)
+                    
+                return df
+                
+            except Exception as e:
+                logger.error(f"🔥 Failed {key}: {str(e)}")
+                return pd.DataFrame()
+
+        # Parallel execution with memory management
+        dfs = []
+        with ThreadPoolExecutor(max_workers=16) as executor:
+            futures = [executor.submit(process_key, key) for key in keys]
+            for future in futures:
+                df = future.result()
+                if not df.empty:
+                    dfs.append(df)
+                    # Maintain memory cleanup
+                    if len(dfs) % 10 == 0:
+                        pd.concat(dfs).reset_index(drop=True)
+                        gc.collect()
+        
+        final_df = pd.concat(dfs, ignore_index=False).sort_index()
+        logger.info(f"✅ Loaded {len(final_df)} total records")
+        return final_df 
+
+    def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
+        """TF-optimized sequence generation"""
+        ds = tf.data.Dataset.from_tensor_slices(data[self.feature_columns].values)
+        ds = ds.window(window, shift=1, drop_remainder=True)
+        ds = ds.flat_map(lambda w: w.batch(window))
+        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+
 
     def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Merge corporate actions data with safety checks and fallbacks"""

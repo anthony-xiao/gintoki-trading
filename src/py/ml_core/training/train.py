@@ -88,10 +88,13 @@ def main():
         data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
         assert set(FEATURE_COLUMNS).issubset(data.columns), \
             f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
-        
         # Create sequences and labels
-        X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)
+        tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=args.seq_length)
+        X = np.array(list(tf_dataset.as_numpy_iterator()))
         y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
+
+        # X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)
+        # y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
         
         # Save for SHAP and Transformer
         joblib.dump(X, 'training_data.pkl')

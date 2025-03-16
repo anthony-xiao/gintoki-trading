@@ -1,0 +1,50 @@
+EC2 setup 
+
+
+# Launch instance with NVIDIA drivers pre-installed
+aws ec2 run-instances \
+  --image-id ami-0abcdef1234567890 \  # Use latest Amazon Linux 2023 GPU AMI
+  --instance-type g5.8xlarge \
+  --key-name your-key-pair \
+  --security-group-ids sg-123456 \
+  --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100}' \
+  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=ml-training}]'
+
+
+
+# Connect via SSH, then:
+sudo dnf update -y
+sudo dnf install -y python3.11 python3.11-devel git
+
+# Install NVIDIA drivers and CUDA 12.2
+https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=Amazon-Linux&target_version=2023&target_type=rpm_local
+    wget https://developer.download.nvidia.com/compute/cuda/12.8.1/local_installers/cuda-repo-amzn2023-12-8-local-12.8.1_570.124.06-1.x86_64.rpm
+    sudo rpm -i cuda-repo-amzn2023-12-8-local-12.8.1_570.124.06-1.x86_64.rpm
+    sudo dnf clean all
+    sudo dnf -y install cuda-toolkit-12-8
+    sudo dnf -y module install nvidia-driver:open-dkms
+
+sudo dnf clean all
+sudo dnf install -y cuda-12-2
+
+# Install cuDNN 8.9.4 for CUDA 12.x
+wget https://developer.download.nvidia.com/compute/cudnn/9.8.0/local_installers/cudnn-local-repo-rhel8-9.8.0-1.0-1.x86_64.rpm
+sudo rpm -i cudnn-local-repo-rhel8-9.8.0-1.0-1.x86_64.rpm
+sudo dnf clean all
+sudo dnf -y install cudnn
+sudo dnf -y install cudnn-cuda-12
+
+# Configure environment
+echo 'export PATH=/usr/local/cuda-12.2/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify installation
+nvidia-smi  # Should show 4xA10G
+nvcc --version  # Should show CUDA 12.2
+
+# Install Python requirements
+python3.11 -m pip install --upgrade pip
+python3.11 -m pip install tensorflow==2.15.0 \
+                          nvidia-cudnn-cu12==8.9.4.25 \
+                          "protobuf<4.21"  # TF compatibility
