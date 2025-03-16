@@ -572,7 +572,7 @@ class EnhancedDataLoader:
             logger.debug("Stack trace:", exc_info=True)
             return pd.DataFrame()  # Return empty to continue pipeline
 
-    def create_sequences(self, data: pd.DataFrame, window: int) -> np.ndarray:
+    def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
         """Create strictly uniform sequences"""
         sequences = []
         for i in range(window, len(data)):
