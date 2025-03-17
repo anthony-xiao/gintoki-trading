@@ -211,62 +211,39 @@ class EnhancedDataLoader:
         logger.info(f"✅ Loaded {len(final_df)} total records")
         return final_df 
     
-    # def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-    #     """Create validated sequences with strict shape enforcement"""
-    #     ds = tf.data.Dataset.from_generator(
-    #         lambda: self._sequence_generator(data, window),
-    #         output_signature=tf.TensorSpec(
-    #             shape=(window, len(self.feature_columns)),
-    #             dtype=tf.float32
-    #         )
-    #     )
-    #     return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
-    
-    # def _sequence_generator(self, data, window):
-        # """Yield only valid sequences"""
-        # # Validate input data exists
-        # if data is None or len(data) == 0:
-        #     raise ValueError("Input data cannot be None or empty for sequence generation")
-        
-        # # Get feature count once
-        # num_features = len(self.feature_columns)
-        
-        # for i in range(window, len(data)):
-        #     # Use 'data' instead of potential 'df' typo
-        #     seq = data.iloc[i-window:i][self.feature_columns].values
-            
-        #     # Add debug logging
-        #     if seq.shape != (window, num_features):
-        #         logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
-        #         continue
-                
-        #     yield seq
-
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """Create 3D sequences (samples, timesteps, features)"""
-        # Generate individual sequences first
-        sequences = [seq for seq in self._sequence_generator(data, window)]
-        
-        # Convert to numpy array with explicit 3D shape
-        array_3d = np.stack(sequences, axis=0)  # Shape: (num_sequences, window, num_features)
-        
-        # Create dataset from 3D array
-        ds = tf.data.Dataset.from_tensor_slices(array_3d)
-        
-        # Batch after sequence generation
-        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
-
+        """Create 3D sequences (samples, window, features)"""
+        # Generate 2D sequences first
+        seq_2d = tf.data.Dataset.from_generator(
+            lambda: self._sequence_generator(data, window),
+            output_signature=tf.TensorSpec(
+                shape=(window, len(self.feature_columns)),
+                dtype=tf.float32
+            )
+        )
+    
+        # Add batch dimension to make 3D
+        return seq_2d.batch(1).prefetch(tf.data.AUTOTUNE)  # (None, 1, window, features)
+    
     def _sequence_generator(self, data, window):
-        """Yield validated 2D sequences"""
-        if data.empty or len(data) < window:
-            raise ValueError(f"Require at least {window} rows, got {len(data)}")
+        """Yield only valid sequences"""
+        # Validate input data exists
+        if data is None or len(data) == 0:
+            raise ValueError("Input data cannot be None or empty for sequence generation")
         
+        # Get feature count once
         num_features = len(self.feature_columns)
         
         for i in range(window, len(data)):
+            # Use 'data' instead of potential 'df' typo
             seq = data.iloc[i-window:i][self.feature_columns].values
-            if seq.shape == (window, num_features):
-                yield seq  # 2D sequence (window, features)
+            
+            # Add debug logging
+            if seq.shape != (window, num_features):
+                logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
+                continue
+                
+            yield seq
 
 
     # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:

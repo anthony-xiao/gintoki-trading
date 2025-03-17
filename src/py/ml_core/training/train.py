@@ -86,41 +86,47 @@ def main():
         # 2. Prepare data for SHAP and Transformer
         logger.info("📦 Phase 2/5: Preparing training data...")
         data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
-
-
-        # Validate data before processing
+        
+        # Validate data exists and has required columns
         if data.empty:
             raise ValueError("🛑 No training data loaded from S3")
-        assert not data[FEATURE_COLUMNS].isnull().values.any(), "NaNs in feature columns"
-
-        # Create 3D sequences [samples, timesteps, features]
-        tf_dataset = loader.create_tf_dataset(data, window=args.seq_length)
-
-        # Verify dataset structure
-        sample = next(iter(tf_dataset))
-        if sample.ndim != 3:
-            raise ValueError(f"Invalid dataset dimensions: {sample.shape}. Expected 3D (batch, seq, features)")
-
-        # Convert to numpy array
-        X = np.concatenate([x.numpy() for x in tf_dataset], axis=0)
-
-        # Verify sequence count
-        if X.shape[0] == 0:
-            raise ValueError(f"No valid sequences generated from {len(data)} rows")
-
-        # Create labels aligned with sequences (offset by window)
-        y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
-        y = y[:X.shape[0]]  # Align with actual sequence count
-
-
-
+        assert set(FEATURE_COLUMNS).issubset(data.columns), \
+            f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
         
-    #     assert set(FEATURE_COLUMNS).issubset(data.columns), \
-    #         f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
-    #     # Create sequences and labels
-    #     tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=args.seq_length)
-    #     window_size = args.seq_length
-    #     num_features = len(FEATURE_COLUMNS) 
+        # Create 3D sequences [samples, window, features]
+        window_size = args.seq_length
+        num_features = len(FEATURE_COLUMNS)
+        tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=window_size)
+
+        # Convert to numpy array with proper 3D shape
+        try:
+            X = np.concatenate([x.numpy() for x in tf_dataset], axis=0)
+        except ValueError as e:
+            if 'need at least one array to concatenate' in str(e):
+                raise ValueError(f"""❌ No valid sequences generated. Check window size vs data length
+                        🚨 No valid sequences found!
+                        - Total data rows: {len(data)}
+                        - Window size: {window_size}
+                        - Required sequence shape: ({window_size}, {num_features})
+                        - Actual shapes found: {set(x.shape for x in tf_dataset)}
+                        """) from e
+            raise
+
+        # Verify 3D shape
+        if X.ndim != 3 or X.shape[1:] != (1, window_size, num_features):
+            raise ValueError(f"Invalid sequence shape {X.shape}. Expected (?, 1, {window_size}, {num_features})")
+
+        # Squeeze singleton batch dimension
+        X = X.squeeze(1)  # Now shape (samples, window, features)
+
+        # Align labels with sequences
+        y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[window_size:]
+
+
+
+
+
+
     #    # Validate data exists
     #     if data.empty:
     #         raise ValueError("🛑 No training data loaded from S3")
@@ -145,9 +151,7 @@ def main():
     #     X = np.stack(sequences, axis=0)
     #     y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
 
-        # X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)
-        # y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
-        
+
         
         # Save for SHAP and Transformer
         joblib.dump(X, 'training_data.pkl')
