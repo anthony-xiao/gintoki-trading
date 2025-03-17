@@ -377,29 +377,19 @@ class EnhancedDataLoader:
         final_df = pd.concat(dfs, ignore_index=False).sort_index()
         logger.info(f"✅ Loaded {len(final_df)} total records")
         return final_df 
-
-    # def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """Create uniform-length sequences with strict windowing"""
-        ds = tf.data.Dataset.from_tensor_slices(data[self.feature_columns].values)
-        # Enforce exact window size and convert to numpy-friendly format
-        ds = ds.window(window, shift=1, drop_remainder=True)
-        ds = ds.flat_map(lambda w: w.batch(window))  # Convert to tensors
-        ds = ds.map(lambda x: tf.ensure_shape(x, [window, len(self.feature_columns)]))
-        
-        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
     
-    def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """Create validated sequences with strict shape enforcement"""
-        ds = tf.data.Dataset.from_generator(
-            lambda: self._sequence_generator(data, window),
-            output_signature=tf.TensorSpec(
-                shape=(window, len(self.feature_columns)),
-                dtype=tf.float32
-            )
-        )
-        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
-    # 
-    def _sequence_generator(self, data, window):
+    # def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
+    #     """Create validated sequences with strict shape enforcement"""
+    #     ds = tf.data.Dataset.from_generator(
+    #         lambda: self._sequence_generator(data, window),
+    #         output_signature=tf.TensorSpec(
+    #             shape=(window, len(self.feature_columns)),
+    #             dtype=tf.float32
+    #         )
+    #     )
+    #     return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+    
+    # def _sequence_generator(self, data, window):
         """Yield only valid sequences"""
         # Validate input data exists
         if data is None or len(data) == 0:
@@ -418,6 +408,32 @@ class EnhancedDataLoader:
                 continue
                 
             yield seq
+
+    def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
+        """Create 3D sequences (samples, timesteps, features)"""
+        # Generate individual sequences first
+        sequences = [seq for seq in self._sequence_generator(data, window)]
+        
+        # Convert to numpy array with explicit 3D shape
+        array_3d = np.stack(sequences, axis=0)  # Shape: (num_sequences, window, num_features)
+        
+        # Create dataset from 3D array
+        ds = tf.data.Dataset.from_tensor_slices(array_3d)
+        
+        # Batch after sequence generation
+        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+
+    def _sequence_generator(self, data, window):
+        """Yield validated 2D sequences"""
+        if data.empty or len(data) < window:
+            raise ValueError(f"Require at least {window} rows, got {len(data)}")
+        
+        num_features = len(self.feature_columns)
+        
+        for i in range(window, len(data)):
+            seq = data.iloc[i-window:i][self.feature_columns].values
+            if seq.shape == (window, num_features):
+                yield seq  # 2D sequence (window, features)
 
 
     # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
