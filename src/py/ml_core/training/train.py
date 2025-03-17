@@ -90,9 +90,9 @@ def main():
             f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
         # Create sequences and labels
         tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=args.seq_length)
-
         window_size = args.seq_length
         num_features = len(FEATURE_COLUMNS) 
+        logger.info(f"dataset {tf_dataset}, window {window_size}, num feature {num_features}")
         X = np.stack(
             [x.numpy() for x in tf_dataset.as_numpy_iterator() 
             if x.shape == (window_size, num_features)],
