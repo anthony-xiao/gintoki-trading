@@ -86,18 +86,37 @@ def main():
         # 2. Prepare data for SHAP and Transformer
         logger.info("📦 Phase 2/5: Preparing training data...")
         data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
+
+
+        
         assert set(FEATURE_COLUMNS).issubset(data.columns), \
             f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
         # Create sequences and labels
         tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=args.seq_length)
         window_size = args.seq_length
         num_features = len(FEATURE_COLUMNS) 
-        logger.info(f"dataset {tf_dataset}, window {window_size}, num feature {num_features}")
-        X = np.stack(
-            [x.numpy() for x in tf_dataset.as_numpy_iterator() 
-            if x.shape == (window_size, num_features)],
-            axis=0
-        )
+       # Validate data exists
+        if data.empty:
+            raise ValueError("🛑 No training data loaded from S3")
+
+        # Create sequences with strict validation
+        sequences = [
+            x.numpy() for x in tf_dataset.as_numpy_iterator() 
+            if x.shape == (window_size, num_features)
+        ]
+
+        if not sequences:  # Critical check
+            error_msg = f"""
+            🚨 No valid sequences found!
+            - Total data rows: {len(data)}
+            - Window size: {window_size}
+            - Required sequence shape: ({window_size}, {num_features})
+            - Actual shapes found: {set(x.shape for x in tf_dataset)}
+            """
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        X = np.stack(sequences, axis=0)
         y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
 
         # X = loader.create_sequences(data[FEATURE_COLUMNS], window=args.seq_length)
