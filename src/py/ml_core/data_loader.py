@@ -212,18 +212,15 @@ class EnhancedDataLoader:
         return final_df 
     
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """Create 3D sequences (samples, window, features)"""
-        # Generate 2D sequences first
-        seq_2d = tf.data.Dataset.from_generator(
+        """Create validated sequences with strict shape enforcement"""
+        ds = tf.data.Dataset.from_generator(
             lambda: self._sequence_generator(data, window),
             output_signature=tf.TensorSpec(
                 shape=(window, len(self.feature_columns)),
                 dtype=tf.float32
             )
         )
-    
-        # Add batch dimension to make 3D
-        return seq_2d.batch(1).prefetch(tf.data.AUTOTUNE)  # (None, 1, window, features)
+        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
     
     def _sequence_generator(self, data, window):
         """Yield only valid sequences"""
