@@ -86,8 +86,6 @@ def main():
         # 2. Prepare data for SHAP and Transformer
         logger.info("📦 Phase 2/5: Preparing training data...")
         data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
-
-
         
         assert set(FEATURE_COLUMNS).issubset(data.columns), \
             f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"

@@ -390,24 +390,24 @@ class EnhancedDataLoader:
     #     return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
     
     # def _sequence_generator(self, data, window):
-        """Yield only valid sequences"""
-        # Validate input data exists
-        if data is None or len(data) == 0:
-            raise ValueError("Input data cannot be None or empty for sequence generation")
+        # """Yield only valid sequences"""
+        # # Validate input data exists
+        # if data is None or len(data) == 0:
+        #     raise ValueError("Input data cannot be None or empty for sequence generation")
         
-        # Get feature count once
-        num_features = len(self.feature_columns)
+        # # Get feature count once
+        # num_features = len(self.feature_columns)
         
-        for i in range(window, len(data)):
-            # Use 'data' instead of potential 'df' typo
-            seq = data.iloc[i-window:i][self.feature_columns].values
+        # for i in range(window, len(data)):
+        #     # Use 'data' instead of potential 'df' typo
+        #     seq = data.iloc[i-window:i][self.feature_columns].values
             
-            # Add debug logging
-            if seq.shape != (window, num_features):
-                logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
-                continue
+        #     # Add debug logging
+        #     if seq.shape != (window, num_features):
+        #         logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
+        #         continue
                 
-            yield seq
+        #     yield seq
 
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
         """Create 3D sequences (samples, timesteps, features)"""
