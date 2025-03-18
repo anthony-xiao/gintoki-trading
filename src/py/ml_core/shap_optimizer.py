@@ -11,7 +11,6 @@ import boto3
 import os
 from io import BytesIO
 import logging
-import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -49,37 +48,30 @@ class EnhancedSHAPOptimizer:
         """Get the latest regime model path from S3"""
         s3 = boto3.client('s3')
         prefix = 'models/enhanced_v'
-        logger.info(f"🔍 Searching S3 bucket '{self.registry.bucket}' with prefix '{prefix}'")
+        logger.info(f"Searching for models in s3://{self.registry.bucket}/{prefix}")
         
-        # First, list all objects with the prefix
+        # List all objects with the prefix
         response = s3.list_objects_v2(
             Bucket=self.registry.bucket,
             Prefix=prefix
         )
-        
-        # Log all found objects for debugging
-        logger.info("📦 Found objects in S3:")
-        for obj in response.get('Contents', []):
-            logger.info(f"  - {obj['Key']}")
         
         # Get all versioned models
         versions = []
         for obj in response.get('Contents', []):
             if 'regime_model.h5' in obj['Key']:
                 versions.append(obj['Key'])
-                logger.info(f"✅ Found regime model: {obj['Key']}")
+                logger.debug(f"Found model: {obj['Key']}")
         
         if not versions:
-            logger.error(f"❌ No regime models found in bucket '{self.registry.bucket}' with prefix '{prefix}'")
+            logger.error(f"No models found in s3://{self.registry.bucket}/{prefix}")
             raise ValueError("No versioned models found in S3")
             
         # Get the latest version (sort by timestamp in filename)
         latest_version = sorted(versions)[-1]
-        logger.info(f"🎯 Selected latest model: {latest_version}")
+        logger.info(f"Using latest model: {latest_version}")
             
-        s3_path = f"s3://{self.registry.bucket}/{latest_version}"
-        logger.info(f"🔗 Full S3 path: {s3_path}")
-        return s3_path
+        return f"s3://{self.registry.bucket}/{latest_version}"
 
     def _load_model_from_s3(self, s3_path):
         """Load model from S3 into memory"""
@@ -89,28 +81,12 @@ class EnhancedSHAPOptimizer:
         bucket = s3_path.split('/')[2]
         key = '/'.join(s3_path.split('/')[3:])
         
-        logger.info(f"📥 Downloading model from s3://{bucket}/{key}")
-        
         # Download model to memory
         response = s3.get_object(Bucket=bucket, Key=key)
         model_data = BytesIO(response['Body'].read())
         
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as tmp_file:
-            tmp_file.write(model_data.getvalue())
-            tmp_path = tmp_file.name
-        
-        logger.info(f"💾 Saved model to temporary file: {tmp_path}")
-        
-        try:
-            # Load model from temporary file
-            model = tf.keras.models.load_model(tmp_path)
-            logger.info("✅ Successfully loaded model from temporary file")
-            return model
-        finally:
-            # Clean up temporary file
-            os.unlink(tmp_path)
-            logger.info("🧹 Cleaned up temporary file")
+        # Load model from memory
+        return tf.keras.models.load_model(model_data)
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""

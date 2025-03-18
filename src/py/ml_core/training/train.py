@@ -93,11 +93,17 @@ def main():
         detector = EnhancedVolatilityDetector(lookback=args.seq_length)
         logger.info(detector)
         detector.train(combined_data, args.epochs)  # Pass data directly
-        regime_model_model_path = 'src/py/ml_core/models/regime_model.h5'
-        if not os.path.exists(regime_model_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(regime_model_model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {regime_model_model_path}")
-        registry.save_enhanced_model(regime_model_model_path, 'volatility')
+        
+        # Save and register the model
+        local_model_path = 'src/py/ml_core/models/regime_model.h5'
+        if not os.path.exists(local_model_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(local_model_path)}")
+            raise FileNotFoundError(f"Volatility model not generated at {local_model_path}")
+        
+        # Save to S3 with versioning
+        s3_key = registry.save_enhanced_model(local_model_path, 'volatility')
+        logger.info(f"✅ Model saved to S3: {s3_key}")
+        
         logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
 
         # 2. Prepare data for SHAP and Transformer
