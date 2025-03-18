@@ -82,22 +82,46 @@ class EnhancedSHAPOptimizer:
         bucket = s3_path.split('/')[2]
         key = '/'.join(s3_path.split('/')[3:])
         
+        logger.info(f"Downloading model from s3://{bucket}/{key}")
+        
         # Download model to memory
         response = s3.get_object(Bucket=bucket, Key=key)
         model_data = BytesIO(response['Body'].read())
         
-        # Create a temporary file
+        # Create a temporary file with proper HDF5 extension
         with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
+            # Write the raw bytes directly
             temp_file.write(model_data.getvalue())
+            temp_file.flush()  # Ensure all data is written
             temp_path = temp_file.name
+            logger.info(f"Created temporary file at {temp_path}")
         
         try:
+            # Verify file exists and has content
+            if not os.path.exists(temp_path):
+                raise FileNotFoundError(f"Temporary file not created at {temp_path}")
+            
+            file_size = os.path.getsize(temp_path)
+            logger.info(f"Temporary file size: {file_size} bytes")
+            
+            if file_size == 0:
+                raise ValueError("Temporary file is empty")
+            
             # Load model from temporary file
+            logger.info("Loading model from temporary file...")
             model = tf.keras.models.load_model(temp_path)
+            logger.info("Model loaded successfully")
             return model
+        except Exception as e:
+            logger.error(f"Error loading model: {str(e)}")
+            raise
         finally:
             # Clean up temporary file
-            os.unlink(temp_path)
+            try:
+                os.unlink(temp_path)
+                logger.info("Temporary file cleaned up")
+            except Exception as e:
+                logger.warning(f"Error cleaning up temporary file: {str(e)}")
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
