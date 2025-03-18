@@ -78,10 +78,14 @@ class EnhancedVolatilityDetector:
             if data is None:
                 raise ValueError("No data provided for training")
 
+            # Create regime labels first
+            logging.info("🎯 Creating regime labels...")
+            data_with_labels = self.create_labels(data.copy())
+            
             # Data Preparation
             logging.debug("🧠 Preparing training data...")
-            X = self.data_loader.create_sequences(data)
-            y = data['regime'].values[self.lookback:]
+            X = self.data_loader.create_sequences(data_with_labels)
+            y = data_with_labels['regime'].values[self.lookback:]
             logging.info(f"🎯 Training data shape: {X.shape}, Labels: {y.shape}")
             
             # Model Training
