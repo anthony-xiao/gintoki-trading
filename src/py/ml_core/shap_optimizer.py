@@ -5,17 +5,25 @@ import numpy as np
 import joblib
 from tqdm import tqdm
 from .data_loader import EnhancedDataLoader
+from .model_registry import EnhancedModelRegistry
 import pandas as pd
+import boto3
+import os
+from io import BytesIO
 
 class EnhancedSHAPOptimizer:
-    def __init__(self, model_path='s3://quant-trader-data-gintoki/models/regime_model.h5',
-                 background_samples=1000, background_data=None):
-    
-    #test line
-    # def __init__(self, model_path: str = 'src/py/ml_core/models/regime_model.h5', background_samples=1):
-        self.model = tf.keras.models.load_model(model_path)
-        self.input_name = self.model.layers[0].name  # Get actual input name
+    def __init__(self, model_path=None, background_samples=1000, background_data=None):
+        """Initialize SHAP optimizer with latest S3 model"""
+        self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
+        
+        # Get latest regime model from S3
+        if model_path is None:
+            model_path = self._get_latest_regime_model()
+        
+        # Download and load model from S3
+        self.model = self._load_model_from_s3(model_path)
+        self.input_name = self.model.layers[0].name
         
         # Use provided background data or load it
         if background_data is not None:
@@ -23,9 +31,7 @@ class EnhancedSHAPOptimizer:
         else:
             self.background = self._load_production_background(background_samples)
 
-        # CRUCIAL: Use concrete model inputs/outputs
-        model_input = self.model.inputs[0]
-        model_output = self.model.outputs[0]
+        # Initialize SHAP explainer with GPU acceleration
         with tf.device('/GPU:0'):
             self.explainer = shap.GradientExplainer(
                 model=self.model,
@@ -33,17 +39,50 @@ class EnhancedSHAPOptimizer:
                 batch_size=32
             )
         
-        # self.explainer = shap.DeepExplainer(
-        #     (model_input, model_output),  # Input/output tuple
-        #     self.background
-        # )
-        
-
-        # self.explainer = shap.DeepExplainer(
-        #     (self.model.get_layer(self.input_name).input, self.model.output),
-        #     self.background
-        # )        
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
+
+    def _get_latest_regime_model(self):
+        """Get the latest regime model path from S3"""
+        s3 = boto3.client('s3')
+        response = s3.list_objects_v2(
+            Bucket=self.registry.bucket,
+            Prefix='models/enhanced_v',
+            Delimiter='/'
+        )
+        
+        # Get all version prefixes
+        versions = [prefix['Prefix'] for prefix in response.get('CommonPrefixes', [])]
+        if not versions:
+            raise ValueError("No versioned models found in S3")
+            
+        # Get the latest version
+        latest_version = sorted(versions)[-1]
+        
+        # Find regime model in latest version
+        response = s3.list_objects_v2(
+            Bucket=self.registry.bucket,
+            Prefix=f"{latest_version}regime_model.h5"
+        )
+        
+        if not response.get('Contents'):
+            raise ValueError(f"No regime model found in version {latest_version}")
+            
+        return f"s3://{self.registry.bucket}/{response['Contents'][0]['Key']}"
+
+    def _load_model_from_s3(self, s3_path):
+        """Load model from S3 into memory"""
+        s3 = boto3.client('s3')
+        
+        # Parse S3 path
+        bucket = s3_path.split('/')[2]
+        key = '/'.join(s3_path.split('/')[3:])
+        
+        # Download model to memory
+        response = s3.get_object(Bucket=bucket, Key=key)
+        model_data = BytesIO(response['Body'].read())
+        
+        # Load model from memory
+        return tf.keras.models.load_model(model_data)
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
