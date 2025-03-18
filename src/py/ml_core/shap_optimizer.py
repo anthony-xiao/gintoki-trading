@@ -11,6 +11,7 @@ import boto3
 import os
 from io import BytesIO
 import logging
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -88,12 +89,28 @@ class EnhancedSHAPOptimizer:
         bucket = s3_path.split('/')[2]
         key = '/'.join(s3_path.split('/')[3:])
         
+        logger.info(f"📥 Downloading model from s3://{bucket}/{key}")
+        
         # Download model to memory
         response = s3.get_object(Bucket=bucket, Key=key)
         model_data = BytesIO(response['Body'].read())
         
-        # Load model from memory
-        return tf.keras.models.load_model(model_data)
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as tmp_file:
+            tmp_file.write(model_data.getvalue())
+            tmp_path = tmp_file.name
+        
+        logger.info(f"💾 Saved model to temporary file: {tmp_path}")
+        
+        try:
+            # Load model from temporary file
+            model = tf.keras.models.load_model(tmp_path)
+            logger.info("✅ Successfully loaded model from temporary file")
+            return model
+        finally:
+            # Clean up temporary file
+            os.unlink(tmp_path)
+            logger.info("🧹 Cleaned up temporary file")
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
