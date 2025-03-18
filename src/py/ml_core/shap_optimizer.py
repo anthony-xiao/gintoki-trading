@@ -10,6 +10,9 @@ import pandas as pd
 import boto3
 import os
 from io import BytesIO
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path=None, background_samples=1000, background_data=None):
@@ -47,27 +50,23 @@ class EnhancedSHAPOptimizer:
         response = s3.list_objects_v2(
             Bucket=self.registry.bucket,
             Prefix='models/enhanced_v',
-            Delimiter='/'
+            Delimiter='_'
         )
         
         # Get all version prefixes
-        versions = [prefix['Prefix'] for prefix in response.get('CommonPrefixes', [])]
+        versions = []
+        for obj in response.get('Contents', []):
+            if 'regime_model.h5' in obj['Key']:
+                versions.append(obj['Key'])
+        
         if not versions:
             raise ValueError("No versioned models found in S3")
             
-        # Get the latest version
+        # Get the latest version (sort by timestamp in filename)
         latest_version = sorted(versions)[-1]
-        
-        # Find regime model in latest version
-        response = s3.list_objects_v2(
-            Bucket=self.registry.bucket,
-            Prefix=f"{latest_version}regime_model.h5"
-        )
-        
-        if not response.get('Contents'):
-            raise ValueError(f"No regime model found in version {latest_version}")
+        logger.info(f"Found latest model: {latest_version}")
             
-        return f"s3://{self.registry.bucket}/{response['Contents'][0]['Key']}"
+        return f"s3://{self.registry.bucket}/{latest_version}"
 
     def _load_model_from_s3(self, s3_path):
         """Load model from S3 into memory"""
