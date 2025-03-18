@@ -20,7 +20,6 @@ class EnhancedDataLoader:
     def __init__(self, bucket: str = 'quant-trader-data-gintoki'):
         logger = logging.getLogger("training")
         logger.debug("\U0001F310 Initializing S3 client for bucket %s", bucket)
-        # self.s3 = boto3.client('s3')
         self.s3 = boto3.client(
             's3',
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),

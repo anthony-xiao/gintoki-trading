@@ -13,6 +13,7 @@ from src.py.ml_core.model_registry import EnhancedModelRegistry
 import logging
 import time
 from logging.handlers import RotatingFileHandler
+import gc
 
 # Configure logging at the top
 def configure_logging():
@@ -71,11 +72,27 @@ def main():
         loader = EnhancedDataLoader()
         registry = EnhancedModelRegistry()
 
+        # Load all data once
+        logger.info("📦 Loading data for all tickers...")
+        all_data = {}
+        for ticker in args.tickers:
+            data = loader.load_ticker_data(ticker)
+            if data is not None:
+                all_data[ticker] = data
+                logger.info(f"✅ Loaded {len(data)} rows for {ticker}")
+        
+        if not all_data:
+            raise ValueError("🛑 No data loaded for any tickers")
+        
+        # Combine all ticker data
+        combined_data = pd.concat(all_data.values())
+        logger.info(f"📊 Total combined data shape: {combined_data.shape}")
+
         # 1. Train volatility detector
         logger.info("🔍 Phase 1/5: Training volatility detector...")
         detector = EnhancedVolatilityDetector(lookback=args.seq_length)
         logger.info(detector)
-        detector.train(args.tickers, args.epochs)
+        detector.train(combined_data, args.epochs)  # Pass data directly
         regime_model_model_path = 'src/py/ml_core/models/regime_model.h5'
         if not os.path.exists(regime_model_model_path):
             logger.error(f"❌ Model file not found: {os.path.abspath(regime_model_model_path)}")
@@ -85,48 +102,62 @@ def main():
 
         # 2. Prepare data for SHAP and Transformer
         logger.info("📦 Phase 2/5: Preparing training data...")
-        data = pd.concat([loader.load_ticker_data(t) for t in args.tickers])
         
         # Validate data exists and has required columns
-        if data.empty:
-            raise ValueError("🛑 No training data loaded from S3")
-        assert set(FEATURE_COLUMNS).issubset(data.columns), \
-            f"Missing features: {set(FEATURE_COLUMNS) - set(data.columns)}"
+        if combined_data.empty:
+            raise ValueError("🛑 No training data available")
+        assert set(FEATURE_COLUMNS).issubset(combined_data.columns), \
+            f"Missing features: {set(FEATURE_COLUMNS) - set(combined_data.columns)}"
         
         # Create 3D sequences [samples, window, features]
         window_size = args.seq_length
         num_features = len(FEATURE_COLUMNS)
-        tf_dataset = loader.create_tf_dataset(data[FEATURE_COLUMNS], window=window_size)
-
-        # Convert to numpy array with proper 3D shape
-        try:
-            X = np.concatenate([x.numpy() for x in tf_dataset], axis=0)
-        except ValueError as e:
-            if 'need at least one array to concatenate' in str(e):
-                raise ValueError(f"""❌ No valid sequences generated. Check window size vs data length
-                        🚨 No valid sequences found!
-                        - Total data rows: {len(data)}
-                        - Window size: {window_size}
-                        - Required sequence shape: ({window_size}, {num_features})
-                        - Actual shapes found: {set(x.shape for x in tf_dataset)}
-                        """) from e
-            raise
-
-        # Verify 3D shape
-        if X.ndim != 3 or X.shape[1:] != (window_size, num_features):
-            raise ValueError(f"Invalid sequence shape {X.shape}. Expected (?, {window_size}, {num_features})")
+        
+        # Process data in chunks to handle large datasets
+        chunk_size = 1000000  # Process 1M rows at a time
+        all_sequences = []
+        total_rows = len(combined_data)
+        
+        logger.info(f"🔄 Processing {total_rows} rows in chunks of {chunk_size}")
+        
+        for start_idx in range(0, total_rows, chunk_size):
+            end_idx = min(start_idx + chunk_size, total_rows)
+            chunk = combined_data.iloc[start_idx:end_idx]
+            
+            # Create sequences for this chunk
+            chunk_sequences = []
+            for i in range(window_size, len(chunk)):
+                seq = chunk.iloc[i-window_size:i][FEATURE_COLUMNS].values
+                if seq.shape == (window_size, num_features):
+                    chunk_sequences.append(seq)
+            
+            # Convert to numpy array and append
+            if chunk_sequences:
+                chunk_array = np.array(chunk_sequences, dtype=np.float32)
+                all_sequences.append(chunk_array)
+                logger.info(f"✅ Processed chunk {start_idx//chunk_size + 1}, shape: {chunk_array.shape}")
+            
+            # Clear memory
+            del chunk_sequences
+            del chunk
+            gc.collect()
+        
+        # Combine all sequences
+        X = np.concatenate(all_sequences, axis=0)
+        logger.info(f"📊 Final sequence shape: {X.shape}")
 
         # Align labels with sequences
-        y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[window_size:]
+        y = np.where(combined_data['close'].shift(-1) > combined_data['close'], 1, -1)[window_size:]
 
         # Save for SHAP and Transformer
+        logger.info("💾 Saving processed data...")
         joblib.dump(X, 'training_data.pkl')
         np.savez('transformer_data.npz', X=X, y=y)
-        logger.debug(f"Data shape: {data.shape} | Columns: {data.columns.tolist()}")
+        logger.debug(f"Data shape: {combined_data.shape} | Columns: {combined_data.columns.tolist()}")
 
         # 3. SHAP feature optimization
         logger.info("🎯 Phase 3/5: Running SHAP optimization...")
-        optimizer = EnhancedSHAPOptimizer()
+        optimizer = EnhancedSHAPOptimizer(background_data=combined_data)  # Pass data directly
         top_features = optimizer.optimize_features('transformer_data.npz', top_k=15)
         np.savez('enhanced_feature_mask.npz', mask=top_features)
         registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
@@ -162,33 +193,10 @@ def main():
         
         # Initialize and process data through the ensemble
         ensemble = AdaptiveEnsembleTrader(ensemble_config)
-
-        # 1. Preprocess the raw data using the ensemble's processor
-        processed_data = ensemble.preprocess_data(data)
-
-        # 2. Generate training signals from processed data
+        processed_data = ensemble.preprocess_data(combined_data)  # Use combined data
         signals = ensemble.calculate_signals(processed_data)
-
-        # 3. Save the configured ensemble
         registry.save_enhanced_model('adaptive_ensemble.pkl', 'ensemble')
 
-
-        print("\nTraining completed successfully!")
-
-        # Add epoch progress logging
-        class ProgressCallback(tf.keras.callbacks.Callback):
-            def on_epoch_end(self, epoch, logs=None):
-                logger.debug(
-                    f"Transformer Epoch {epoch+1}/{args.epochs} | "
-                    f"Loss: {logs['loss']:.4f} | Val Loss: {logs['val_loss']:.4f}"
-                )
-        
-        transformer.train(
-            'transformer_data.npz', 
-            epochs=args.epochs,
-            callbacks=[ProgressCallback()]
-        )
-        
         logger.info(f"🏁 Training completed in {time.time()-start_time:.1f} seconds")
 
     except Exception as e:

@@ -5,18 +5,23 @@ import numpy as np
 import joblib
 from tqdm import tqdm
 from .data_loader import EnhancedDataLoader
+import pandas as pd
 
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path='s3://quant-trader-data-gintoki/models/regime_model.h5',
-                 background_samples=1000):
+                 background_samples=1000, background_data=None):
     
     #test line
     # def __init__(self, model_path: str = 'src/py/ml_core/models/regime_model.h5', background_samples=1):
         self.model = tf.keras.models.load_model(model_path)
         self.input_name = self.model.layers[0].name  # Get actual input name
         self.data_loader = EnhancedDataLoader()
-        self.background = self._load_production_background(background_samples)
-
+        
+        # Use provided background data or load it
+        if background_data is not None:
+            self.background = self._prepare_background(background_data, background_samples)
+        else:
+            self.background = self._load_production_background(background_samples)
 
         # CRUCIAL: Use concrete model inputs/outputs
         model_input = self.model.inputs[0]
@@ -40,7 +45,12 @@ class EnhancedSHAPOptimizer:
         # )        
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
 
-    def _load_production_background(self, n_samples):
+    def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
+        """Prepare background data from provided DataFrame"""
+        sequences = self.data_loader.create_sequences(data)
+        return sequences[-n_samples:]
+
+    def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3"""
         df = self.data_loader.load_ticker_data('AMZN')
         sequences = self.data_loader.create_sequences(df)
