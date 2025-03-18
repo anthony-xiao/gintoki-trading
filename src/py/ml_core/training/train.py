@@ -113,46 +113,12 @@ def main():
             raise
 
         # Verify 3D shape
-        if X.ndim != 3 or X.shape[1:] != (1, window_size, num_features):
-            raise ValueError(f"Invalid sequence shape {X.shape}. Expected (?, 1, {window_size}, {num_features})")
-
-        # Squeeze singleton batch dimension
-        X = X.squeeze(1)  # Now shape (samples, window, features)
+        if X.ndim != 3 or X.shape[1:] != (window_size, num_features):
+            raise ValueError(f"Invalid sequence shape {X.shape}. Expected (?, {window_size}, {num_features})")
 
         # Align labels with sequences
         y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[window_size:]
 
-
-
-
-
-
-    #    # Validate data exists
-    #     if data.empty:
-    #         raise ValueError("🛑 No training data loaded from S3")
-
-    #     # Create sequences with strict validation
-    #     sequences = [
-    #         x.numpy() for x in tf_dataset.as_numpy_iterator() 
-    #         if x.shape == (window_size, num_features)
-    #     ]
-
-    #     if not sequences:  # Critical check
-    #         error_msg = f"""
-    #         🚨 No valid sequences found!
-    #         - Total data rows: {len(data)}
-    #         - Window size: {window_size}
-    #         - Required sequence shape: ({window_size}, {num_features})
-    #         - Actual shapes found: {set(x.shape for x in tf_dataset)}
-    #         """
-    #         logger.error(error_msg)
-    #         raise ValueError(error_msg)
-
-    #     X = np.stack(sequences, axis=0)
-    #     y = np.where(data['close'].shift(-1) > data['close'], 1, -1)[args.seq_length:]
-
-
-        
         # Save for SHAP and Transformer
         joblib.dump(X, 'training_data.pkl')
         np.savez('transformer_data.npz', X=X, y=y)
