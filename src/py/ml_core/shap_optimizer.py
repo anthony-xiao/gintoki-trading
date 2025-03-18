@@ -47,26 +47,38 @@ class EnhancedSHAPOptimizer:
     def _get_latest_regime_model(self):
         """Get the latest regime model path from S3"""
         s3 = boto3.client('s3')
+        prefix = 'models/enhanced_v'
+        logger.info(f"🔍 Searching S3 bucket '{self.registry.bucket}' with prefix '{prefix}'")
+        
+        # First, list all objects with the prefix
         response = s3.list_objects_v2(
             Bucket=self.registry.bucket,
-            Prefix='models/enhanced_v',
-            Delimiter='_'
+            Prefix=prefix
         )
         
-        # Get all version prefixes
+        # Log all found objects for debugging
+        logger.info("📦 Found objects in S3:")
+        for obj in response.get('Contents', []):
+            logger.info(f"  - {obj['Key']}")
+        
+        # Get all versioned models
         versions = []
         for obj in response.get('Contents', []):
             if 'regime_model.h5' in obj['Key']:
                 versions.append(obj['Key'])
+                logger.info(f"✅ Found regime model: {obj['Key']}")
         
         if not versions:
+            logger.error(f"❌ No regime models found in bucket '{self.registry.bucket}' with prefix '{prefix}'")
             raise ValueError("No versioned models found in S3")
             
         # Get the latest version (sort by timestamp in filename)
         latest_version = sorted(versions)[-1]
-        logger.info(f"Found latest model: {latest_version}")
+        logger.info(f"🎯 Selected latest model: {latest_version}")
             
-        return f"s3://{self.registry.bucket}/{latest_version}"
+        s3_path = f"s3://{self.registry.bucket}/{latest_version}"
+        logger.info(f"🔗 Full S3 path: {s3_path}")
+        return s3_path
 
     def _load_model_from_s3(self, s3_path):
         """Load model from S3 into memory"""
