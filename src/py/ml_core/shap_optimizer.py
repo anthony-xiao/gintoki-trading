@@ -12,8 +12,6 @@ from io import BytesIO
 import logging
 import os
 import tempfile
-from sklearn.model_selection import train_test_split
-
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +27,23 @@ class EnhancedSHAPOptimizer:
         
         # Download and load model from S3
         self.model = self._load_model_from_s3(model_path)
+        self.input_name = self.model.layers[0].name
         
         # Use provided background data or load it
         if background_data is not None:
             self.background = self._prepare_background(background_data, background_samples)
         else:
             self.background = self._load_production_background(background_samples)
+            
+        logger.info(f"Background data shape: {self.background.shape}")
         
-        # Initialize SHAP explainer with DeepExplainer
-        self.explainer = shap.DeepExplainer(
-            model=self.model,
+        # Initialize SHAP explainer with KernelExplainer
+        logger.info("Initializing KernelExplainer...")
+        self.explainer = shap.KernelExplainer(
+            model=lambda x: self.model.predict(x, verbose=0),
             data=self.background
         )
+        logger.info("KernelExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
 
@@ -143,86 +146,127 @@ class EnhancedSHAPOptimizer:
                 logger.warning(f"Error cleaning up temporary file: {str(e)}")
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
-        """Prepare background data from provided DataFrame with efficient sampling"""
+        """Prepare background data from provided DataFrame"""
+        logger.info(f"Preparing background data with {n_samples} samples")
         sequences = self.data_loader.create_sequences(data)
+        logger.info(f"Created sequences shape: {sequences.shape}")
         
-        # Use stratified sampling if possible
-        if 'regime' in data.columns:
-            labels = data['regime'].values[self.model.input_shape[1]:]
-            _, _, sequences, _ = train_test_split(
-                sequences, labels,
-                test_size=1 - (n_samples/len(sequences)),
-                stratify=labels,
-                random_state=42
-            )
-        else:
-            # Random sampling if no labels available
-            indices = np.random.choice(len(sequences), size=min(n_samples, len(sequences)), replace=False)
-            sequences = sequences[indices]
-        
-        return sequences
+        # Keep 3D structure for KernelExplainer
+        n_samples = min(n_samples, len(sequences))
+        background = sequences[-n_samples:]
+        logger.info(f"Final background shape: {background.shape}")
+        return background
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
-        """Load real market data from S3 with efficient sampling"""
+        """Load real market data from S3"""
+        logger.info(f"Loading production background data with {n_samples} samples")
         df = self.data_loader.load_ticker_data('AMZN')
-        return self._prepare_background(df, n_samples)
+        sequences = self.data_loader.create_sequences(df)
+        logger.info(f"Created sequences shape: {sequences.shape}")
+        
+        # Keep 3D structure for KernelExplainer
+        n_samples = min(n_samples, len(sequences))
+        background = sequences[-n_samples:]
+        logger.info(f"Final background shape: {background.shape}")
+        return background
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with efficient batching"""
-        batch_size = 128  # Optimized for memory
-        shap_values = []
+        """Compute SHAP values with detailed logging and error handling"""
+        logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         
         # Process in batches with progress tracking
-        for i in tqdm(range(0, len(data), batch_size), 
-                    desc='SHAP Computation', unit='batch'):
-            batch = data[i:i+batch_size]
-            batch_shap = self.explainer.shap_values(
-                batch,
-                check_additivity=False  # Faster computation
-            )
-            # DeepExplainer returns a list of arrays for each output
-            if isinstance(batch_shap, list):
-                batch_shap = batch_shap[0]  # Take first output
-            shap_values.append(batch_shap)
+        batch_size = 32  # Smaller batch size for KernelExplainer
+        shap_values = []
         
-        # Combine all SHAP values
-        return np.concatenate(shap_values)
+        try:
+            for i in tqdm(range(0, len(data), batch_size), 
+                        desc='SHAP Computation', unit='batch'):
+                batch = data[i:i+batch_size].astype('float32')
+                logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
+                
+                try:
+                    batch_shap = self.explainer.shap_values(
+                        batch,
+                        nsamples=100,  # Number of samples for background distribution
+                        silent=True  # Suppress progress bars
+                    )
+                    
+                    # KernelExplainer returns a list of arrays for each output
+                    if isinstance(batch_shap, list):
+                        batch_shap = batch_shap[0]  # Take first output
+                    
+                    shap_values.append(batch_shap)
+                    logger.debug(f"Successfully computed SHAP for batch {i//batch_size + 1}")
+                    
+                except Exception as e:
+                    logger.error(f"Error computing SHAP for batch {i//batch_size + 1}: {str(e)}")
+                    raise
+            
+            # Combine all SHAP values
+            final_shap = np.concatenate(shap_values)
+            logger.info(f"Successfully computed SHAP values, final shape: {final_shap.shape}")
+            return final_shap
+            
+        except Exception as e:
+            logger.error(f"Critical error in SHAP calculation: {str(e)}")
+            raise
 
     def optimize_features(self, input_data, top_k=15):
-        """Profit-focused feature optimization"""
-        if isinstance(input_data, str):
-            if input_data.endswith('.npz'):
-                # Load .npz file
-                data = np.load(input_data)
-                if 'X' in data:
-                    data = data['X']
+        """Profit-focused feature optimization with enhanced logging"""
+        logger.info("Starting feature optimization")
+        
+        try:
+            # Load and validate input data
+            if isinstance(input_data, str):
+                logger.info(f"Loading input data from {input_data}")
+                if input_data.endswith('.npz'):
+                    data = np.load(input_data)
+                    if 'X' in data:
+                        data = data['X']
+                        logger.info(f"Loaded data shape: {data.shape}")
+                    else:
+                        raise ValueError(f"No 'X' array found in {input_data}")
                 else:
-                    raise ValueError(f"No 'X' array found in {input_data}")
+                    data = joblib.load(input_data)
+                    logger.info(f"Loaded data shape: {data.shape}")
             else:
-                # Try joblib for other formats
-                data = joblib.load(input_data)
-        else:
-            data = input_data  # Treat as pre-loaded array
-        
-        # Ensure data contains essential features
-        for f in self.essential_features:
-            assert f in self.data_loader.feature_columns, \
-                f"Mandatory feature {f} missing!"
-        
-        # Compute SHAP with efficient batching
-        shap_vals = self.calculate_shap(data)
-        
-        # Average SHAP values across time dimension
-        importance = np.abs(shap_vals).mean(axis=1).mean(axis=0)  # Average across samples and time
-        importance *= self._feature_profit_weights()  # Revenue-based scaling
-        
-        # Force include corporate action features
-        essential_idx = [self.data_loader.feature_columns.index(f) 
-                        for f in self.essential_features]
-        importance[essential_idx] += 1000
-        
-        # Select top features with profitability impact
-        return np.argsort(importance)[-top_k:]
+                data = input_data
+                logger.info(f"Using pre-loaded data shape: {data.shape}")
+            
+            # Validate essential features
+            for f in self.essential_features:
+                if f not in self.data_loader.feature_columns:
+                    raise ValueError(f"Mandatory feature {f} missing!")
+            
+            # Compute SHAP values
+            logger.info("Computing SHAP values...")
+            shap_vals = self.calculate_shap(data)
+            logger.info(f"SHAP values computed, shape: {shap_vals.shape}")
+            
+            # Calculate feature importance
+            importance = np.abs(shap_vals).mean(axis=1).mean(axis=0)
+            logger.info(f"Computed feature importance shape: {importance.shape}")
+            
+            # Apply profit weights
+            weights = self._feature_profit_weights()
+            importance *= weights
+            logger.info("Applied profit weights to importance scores")
+            
+            # Force include essential features
+            essential_idx = [self.data_loader.feature_columns.index(f) 
+                           for f in self.essential_features]
+            importance[essential_idx] += 1000
+            logger.info("Added essential features to selection")
+            
+            # Select top features
+            top_features = np.argsort(importance)[-top_k:]
+            logger.info(f"Selected top {top_k} features")
+            
+            return top_features
+            
+        except Exception as e:
+            logger.error(f"Error in feature optimization: {str(e)}")
+            raise
     
     def _feature_profit_weights(self):
         """Historical profitability weighting"""
