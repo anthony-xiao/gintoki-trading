@@ -6,6 +6,10 @@ from tqdm import tqdm
 from src.py.ml_core.shap_optimizer import EnhancedSHAPOptimizer
 from src.py.ml_core.data_loader import EnhancedDataLoader
 import gc
+import boto3
+from io import BytesIO
+from botocore.config import Config
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(
@@ -14,16 +18,80 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray:
-    """Load and process data for a single ticker"""
+def process_s3_key(key: str, bucket: str, s3_client: boto3.client) -> pd.DataFrame:
+    """Process a single S3 key in parallel"""
     try:
-        df = data_loader.load_ticker_data(ticker)
-        if df is None:
-            logger.warning(f"Failed to load data for {ticker}")
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        bio = BytesIO(response['Body'].read())
+        df = pd.read_parquet(bio)
+        
+        # Downsample large files
+        if len(df) > 1_000_000:
+            df = df.sample(1_000_000)
+            
+        return df
+    except Exception as e:
+        logger.error(f"Error processing {key}: {str(e)}")
+        return pd.DataFrame()
+
+def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray:
+    """Load and process data for a single ticker with parallel S3 loading"""
+    try:
+        # Initialize S3 client with optimized config
+        s3 = boto3.client('s3',
+                        region_name=os.getenv('AWS_DEFAULT_REGION', 'us-west-2'),
+                        config=Config(signature_version='s3v4', max_pool_connections=50))
+        
+        # Get all Parquet keys for the ticker
+        prefix = f'historical/{ticker}/aggregates/minute/'
+        keys = []
+        paginator = s3.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(Bucket=data_loader.bucket, Prefix=prefix):
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                if key.endswith('/') or not key.lower().endswith('.parquet'):
+                    continue
+                keys.append(key)
+        
+        logger.info(f"Found {len(keys)} files to process for {ticker}")
+        
+        # Process files in parallel
+        dfs = []
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            future_to_key = {
+                executor.submit(process_s3_key, key, data_loader.bucket, s3): key 
+                for key in keys
+            }
+            
+            for future in tqdm(future_to_key, desc=f"Loading {ticker} data"):
+                key = future_to_key[future]
+                try:
+                    df = future.result()
+                    if not df.empty:
+                        dfs.append(df)
+                except Exception as e:
+                    logger.error(f"Failed to process {key}: {str(e)}")
+        
+        if not dfs:
+            logger.warning(f"No data loaded for {ticker}")
             return None
-        sequences = data_loader.create_sequences(df)
-        logger.info(f"Loaded {ticker} with shape {sequences.shape}")
+            
+        # Combine all dataframes
+        combined_df = pd.concat(dfs, ignore_index=False).sort_index()
+        logger.info(f"Combined data shape for {ticker}: {combined_df.shape}")
+        
+        # Create sequences
+        sequences = data_loader.create_sequences(combined_df)
+        logger.info(f"Created sequences for {ticker} with shape {sequences.shape}")
+        
+        # Clear memory
+        del dfs
+        del combined_df
+        gc.collect()
+        
         return sequences
+        
     except Exception as e:
         logger.error(f"Error loading {ticker}: {str(e)}")
         return None
