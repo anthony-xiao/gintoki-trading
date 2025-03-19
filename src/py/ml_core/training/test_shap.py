@@ -25,9 +25,13 @@ def process_s3_key(key: str, bucket: str, s3_client: boto3.client) -> pd.DataFra
         bio = BytesIO(response['Body'].read())
         df = pd.read_parquet(bio)
         
+        logger.debug(f"Loaded data from {key} with shape: {df.shape}")
+        logger.debug(f"Columns in loaded data: {df.columns.tolist()}")
+        
         # Downsample large files
         if len(df) > 1_000_000:
             df = df.sample(1_000_000)
+            logger.debug(f"Downsampled to shape: {df.shape}")
             
         return df
     except Exception as e:
@@ -52,6 +56,8 @@ def process_quotes(ticker: str, bucket: str, s3_client: boto3.client) -> pd.Data
             logger.warning(f"No quote data found for {ticker}")
             return pd.DataFrame()
             
+        logger.info(f"Found {len(keys)} quote files for {ticker}")
+            
         # Process quote files in parallel
         dfs = []
         with ThreadPoolExecutor(max_workers=30) as executor:
@@ -66,6 +72,7 @@ def process_quotes(ticker: str, bucket: str, s3_client: boto3.client) -> pd.Data
                     df = future.result()
                     if not df.empty:
                         dfs.append(df)
+                        logger.debug(f"Successfully processed quote file: {key}")
                 except Exception as e:
                     logger.error(f"Failed to process quote {key}: {str(e)}")
         
@@ -74,6 +81,8 @@ def process_quotes(ticker: str, bucket: str, s3_client: boto3.client) -> pd.Data
             
         # Combine and process quotes
         quotes_df = pd.concat(dfs, ignore_index=False).sort_index()
+        logger.info(f"Combined quotes shape: {quotes_df.shape}")
+        logger.info(f"Quote columns: {quotes_df.columns.tolist()}")
         
         # Resample to 1-minute bars
         quotes_df = quotes_df.resample('1min').agg({
@@ -82,10 +91,13 @@ def process_quotes(ticker: str, bucket: str, s3_client: boto3.client) -> pd.Data
             'bid_size': 'sum',
             'ask_size': 'sum'
         })
+        logger.info(f"Resampled quotes shape: {quotes_df.shape}")
         
         # Calculate spread features
         quotes_df['bid_ask_spread'] = quotes_df['ask_price'] - quotes_df['bid_price']
         quotes_df['mid_price'] = (quotes_df['ask_price'] + quotes_df['bid_price']) / 2
+        logger.info(f"Final quotes shape with spread features: {quotes_df.shape}")
+        logger.info(f"Final quote columns: {quotes_df.columns.tolist()}")
         
         return quotes_df
         
@@ -129,6 +141,7 @@ def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray
                     df = future.result()
                     if not df.empty:
                         dfs.append(df)
+                        logger.debug(f"Successfully processed file: {key}")
                 except Exception as e:
                     logger.error(f"Failed to process {key}: {str(e)}")
         
@@ -139,6 +152,7 @@ def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray
         # Combine all dataframes
         combined_df = pd.concat(dfs, ignore_index=False).sort_index()
         logger.info(f"Combined data shape for {ticker}: {combined_df.shape}")
+        logger.info(f"Combined data columns: {combined_df.columns.tolist()}")
         
         # Load and merge quote data
         quotes_df = process_quotes(ticker, data_loader.bucket, s3)
@@ -150,16 +164,21 @@ def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray
                 right_index=True,
                 how='outer'
             ).ffill()
+            logger.info(f"After quote merge shape: {combined_df.shape}")
+            logger.info(f"After quote merge columns: {combined_df.columns.tolist()}")
         
         # Add missing columns with defaults
         if 'days_since_dividend' not in combined_df.columns:
             combined_df['days_since_dividend'] = 3650
+            logger.info("Added default days_since_dividend")
         if 'split_ratio' not in combined_df.columns:
             combined_df['split_ratio'] = 1.0
+            logger.info("Added default split_ratio")
             
         # Create sequences
         sequences = data_loader.create_sequences(combined_df)
         logger.info(f"Created sequences for {ticker} with shape {sequences.shape}")
+        logger.info(f"Sequence features: {sequences.shape[-1]}")
         
         # Clear memory
         del dfs
@@ -179,6 +198,8 @@ def test_shap_optimization():
         
         # Initialize components
         data_loader = EnhancedDataLoader()
+        logger.info(f"Data loader feature columns: {data_loader.feature_columns}")
+        
         optimizer = EnhancedSHAPOptimizer(background_samples=100)
         
         # Define test tickers
@@ -203,6 +224,8 @@ def test_shap_optimization():
                     if sequences is not None:
                         all_sequences.append(sequences)
                         logger.info(f"✅ Successfully loaded {ticker}")
+                        logger.info(f"Sequences shape: {sequences.shape}")
+                        logger.info(f"Sequences features: {sequences.shape[-1]}")
                 except Exception as e:
                     logger.error(f"❌ Failed to load {ticker}: {str(e)}")
         
@@ -212,6 +235,7 @@ def test_shap_optimization():
         # Combine all sequences
         combined_sequences = np.concatenate(all_sequences)
         logger.info(f"📊 Combined sequences shape: {combined_sequences.shape}")
+        logger.info(f"Combined sequences features: {combined_sequences.shape[-1]}")
         
         # Clear memory
         del all_sequences

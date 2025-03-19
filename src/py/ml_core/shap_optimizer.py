@@ -21,6 +21,9 @@ class EnhancedSHAPOptimizer:
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
         
+        # Log feature columns
+        logger.info(f"Available feature columns: {self.data_loader.feature_columns}")
+        
         # Get latest regime model from S3
         if model_path is None:
             model_path = self._get_latest_regime_model()
@@ -29,6 +32,10 @@ class EnhancedSHAPOptimizer:
         self.model = self._load_model_from_s3(model_path)
         self.input_name = self.model.layers[0].name
         
+        # Log model input shape
+        input_shape = self.model.layers[0].input_shape
+        logger.info(f"Model input shape: {input_shape}")
+        
         # Use provided background data or load it
         if background_data is not None:
             self.background = self._prepare_background(background_data, background_samples)
@@ -36,6 +43,7 @@ class EnhancedSHAPOptimizer:
             self.background = self._load_production_background(background_samples)
             
         logger.info(f"Background data shape: {self.background.shape}")
+        logger.info(f"Background data features: {self.background.shape[-1]}")
         
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
@@ -46,6 +54,7 @@ class EnhancedSHAPOptimizer:
         logger.info("KernelExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
+        logger.info(f"Essential features: {self.essential_features}")
 
     def _predict_3d(self, x):
         """Helper function to handle 3D predictions"""
@@ -55,6 +64,7 @@ class EnhancedSHAPOptimizer:
             n_features = x.shape[1]
             n_timesteps = self.background.shape[1]  # Get timesteps from background
             x = x.reshape(n_samples, n_timesteps, n_features)
+            logger.debug(f"Reshaped 2D input to 3D: {x.shape}")
         
         # Ensure input matches model's expected shape
         if x.shape[1:] != self.background.shape[1:]:
@@ -65,11 +75,17 @@ class EnhancedSHAPOptimizer:
     def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
         """Reshape 3D data to 2D for SHAP computation"""
         n_samples, n_timesteps, n_features = data.shape
-        return data.reshape(n_samples * n_timesteps, n_features)
+        logger.info(f"Reshaping 3D data: samples={n_samples}, timesteps={n_timesteps}, features={n_features}")
+        reshaped = data.reshape(n_samples * n_timesteps, n_features)
+        logger.info(f"Reshaped data shape: {reshaped.shape}")
+        return reshaped
 
     def _reshape_back_to_3d(self, data: np.ndarray, original_shape: tuple) -> np.ndarray:
         """Reshape 2D SHAP values back to 3D"""
-        return data.reshape(original_shape)
+        logger.info(f"Reshaping back to original shape: {original_shape}")
+        reshaped = data.reshape(original_shape)
+        logger.info(f"Reshaped back to 3D: {reshaped.shape}")
+        return reshaped
 
     def _get_latest_regime_model(self):
         """Get the latest regime model path from S3"""
@@ -202,6 +218,7 @@ class EnhancedSHAPOptimizer:
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with detailed logging and error handling"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
+        logger.info(f"Data features: {data.shape[-1]}")
         
         # Store original shape
         original_shape = data.shape
@@ -209,6 +226,7 @@ class EnhancedSHAPOptimizer:
         # Reshape data for SHAP
         data_2d = self._reshape_for_shap(data)
         logger.info(f"Reshaped data for SHAP computation: {data_2d.shape}")
+        logger.info(f"2D data features: {data_2d.shape[-1]}")
         
         # Process in batches with progress tracking
         batch_size = 32
@@ -219,6 +237,7 @@ class EnhancedSHAPOptimizer:
                         desc='SHAP Computation', unit='batch'):
                 batch = data_2d[i:i+batch_size].astype('float32')
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
+                logger.debug(f"Batch features: {batch.shape[-1]}")
                 
                 try:
                     batch_shap = self.explainer.shap_values(
@@ -231,11 +250,14 @@ class EnhancedSHAPOptimizer:
                     if isinstance(batch_shap, list):
                         batch_shap = batch_shap[0]  # Take first output
                     
+                    logger.debug(f"Batch SHAP shape: {batch_shap.shape}")
                     shap_values.append(batch_shap)
                     logger.debug(f"Successfully computed SHAP for batch {i//batch_size + 1}")
                     
                 except Exception as e:
                     logger.error(f"Error computing SHAP for batch {i//batch_size + 1}: {str(e)}")
+                    logger.error(f"Batch shape: {batch.shape}")
+                    logger.error(f"Batch features: {batch.shape[-1]}")
                     raise
             
             # Combine all SHAP values
@@ -265,14 +287,17 @@ class EnhancedSHAPOptimizer:
                     if 'X' in data:
                         data = data['X']
                         logger.info(f"Loaded data shape: {data.shape}")
+                        logger.info(f"Loaded data features: {data.shape[-1]}")
                     else:
                         raise ValueError(f"No 'X' array found in {input_data}")
                 else:
                     data = joblib.load(input_data)
                     logger.info(f"Loaded data shape: {data.shape}")
+                    logger.info(f"Loaded data features: {data.shape[-1]}")
             else:
                 data = input_data
                 logger.info(f"Using pre-loaded data shape: {data.shape}")
+                logger.info(f"Using pre-loaded data features: {data.shape[-1]}")
             
             # Validate essential features
             for f in self.essential_features:
@@ -287,11 +312,13 @@ class EnhancedSHAPOptimizer:
             # Calculate feature importance (average across time steps)
             importance = np.abs(shap_vals).mean(axis=1).mean(axis=0)
             logger.info(f"Computed feature importance shape: {importance.shape}")
+            logger.info(f"Feature importance values: {importance}")
             
             # Apply profit weights
             weights = self._feature_profit_weights()
             importance *= weights
             logger.info("Applied profit weights to importance scores")
+            logger.info(f"Weighted importance values: {importance}")
             
             # Force include essential features
             essential_idx = [self.data_loader.feature_columns.index(f) 
