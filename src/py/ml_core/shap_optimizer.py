@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path=None, background_samples=1000, background_data=None):
         """Initialize SHAP optimizer with latest S3 model"""
+        # Configure GPU settings first, before any TensorFlow operations
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                tf.config.experimental.set_memory_growth(gpus[0], True)
+                tf.config.optimizer.set_jit(True)  # Enable XLA compilation
+                logger.info("GPU configured successfully")
+            except RuntimeError as e:
+                logger.warning(f"GPU configuration failed: {e}")
+        
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
         
@@ -181,12 +191,6 @@ class EnhancedSHAPOptimizer:
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with GPU acceleration and precision control"""
-        # Configure GPU for optimal throughput
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            tf.config.experimental.set_memory_growth(gpus[0], True)
-            tf.config.optimizer.set_jit(True)  # Enable XLA compilation
-        
         # Enable mixed precision for 2.1x speedup
         tf.keras.mixed_precision.set_global_policy('mixed_float16')
         
