@@ -145,13 +145,19 @@ class EnhancedSHAPOptimizer:
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
         sequences = self.data_loader.create_sequences(data)
-        return sequences[-n_samples:]
+        # Reshape to 2D for SHAP
+        n_samples = min(n_samples, len(sequences))
+        background = sequences[-n_samples:].reshape(n_samples, -1)
+        return background
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3"""
         df = self.data_loader.load_ticker_data('AMZN')
         sequences = self.data_loader.create_sequences(df)
-        return sequences[-n_samples:]
+        # Reshape to 2D for SHAP
+        n_samples = min(n_samples, len(sequences))
+        background = sequences[-n_samples:].reshape(n_samples, -1)
+        return background
         
         # Test line
         # return np.random.randn(n_samples, 60, 20)  # Match production shape
@@ -161,13 +167,18 @@ class EnhancedSHAPOptimizer:
         # Enable mixed precision for 2.1x speedup
         tf.keras.mixed_precision.set_global_policy('mixed_float16')
         
+        # Reshape data for SHAP (flatten time dimension)
+        original_shape = data.shape
+        n_samples = original_shape[0]
+        data_reshaped = data.reshape(n_samples, -1)
+        
         batch_size = 128  # Optimized for A10G/A100 GPU memory
         shap_values = []
         
         # Process in batches with progress tracking
-        for i in tqdm(range(0, len(data), batch_size), 
+        for i in tqdm(range(0, len(data_reshaped), batch_size), 
                     desc='SHAP Computation', unit='batch'):
-            batch = data[i:i+batch_size].astype('float32')
+            batch = data_reshaped[i:i+batch_size].astype('float32')
             batch_shap = self.explainer.shap_values(
                 batch,
                 nsamples=100  # Balance between speed and accuracy
@@ -179,7 +190,12 @@ class EnhancedSHAPOptimizer:
         
         # Restore precision policy
         tf.keras.mixed_precision.set_global_policy('float32')
-        return np.concatenate(shap_values)
+        
+        # Reshape SHAP values back to original dimensions
+        shap_values = np.concatenate(shap_values)
+        shap_values = shap_values.reshape(original_shape)
+        
+        return shap_values
 
     def optimize_features(self, input_data, top_k=15):
         """Profit-focused feature optimization"""
@@ -205,8 +221,8 @@ class EnhancedSHAPOptimizer:
         # Compute SHAP with GPU acceleration
         shap_vals = self.calculate_shap(data)
         
-        # Profit-aware weighting
-        importance = np.abs(shap_vals).mean((0,1)) 
+        # Average SHAP values across time dimension
+        importance = np.abs(shap_vals).mean(axis=1).mean(axis=0)  # Average across samples and time
         importance *= self._feature_profit_weights()  # Revenue-based scaling
         
         # Force include corporate action features
