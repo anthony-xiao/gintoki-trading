@@ -11,6 +11,7 @@ import boto3
 from io import BytesIO
 import logging
 import os
+import tempfile
 
 
 logger = logging.getLogger(__name__)
