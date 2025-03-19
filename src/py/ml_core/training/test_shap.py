@@ -34,6 +34,65 @@ def process_s3_key(key: str, bucket: str, s3_client: boto3.client) -> pd.DataFra
         logger.error(f"Error processing {key}: {str(e)}")
         return pd.DataFrame()
 
+def process_quotes(ticker: str, bucket: str, s3_client: boto3.client) -> pd.DataFrame:
+    """Process quote data in parallel"""
+    try:
+        prefix = f'historical/{ticker}/quotes/'
+        keys = []
+        paginator = s3_client.get_paginator('list_objects_v2')
+        
+        for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                if key.endswith('/') or not key.lower().endswith('.parquet'):
+                    continue
+                keys.append(key)
+        
+        if not keys:
+            logger.warning(f"No quote data found for {ticker}")
+            return pd.DataFrame()
+            
+        # Process quote files in parallel
+        dfs = []
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            future_to_key = {
+                executor.submit(process_s3_key, key, bucket, s3_client): key 
+                for key in keys
+            }
+            
+            for future in tqdm(future_to_key, desc=f"Loading {ticker} quotes"):
+                key = future_to_key[future]
+                try:
+                    df = future.result()
+                    if not df.empty:
+                        dfs.append(df)
+                except Exception as e:
+                    logger.error(f"Failed to process quote {key}: {str(e)}")
+        
+        if not dfs:
+            return pd.DataFrame()
+            
+        # Combine and process quotes
+        quotes_df = pd.concat(dfs, ignore_index=False).sort_index()
+        
+        # Resample to 1-minute bars
+        quotes_df = quotes_df.resample('1min').agg({
+            'bid_price': 'mean',
+            'ask_price': 'mean',
+            'bid_size': 'sum',
+            'ask_size': 'sum'
+        })
+        
+        # Calculate spread features
+        quotes_df['bid_ask_spread'] = quotes_df['ask_price'] - quotes_df['bid_price']
+        quotes_df['mid_price'] = (quotes_df['ask_price'] + quotes_df['bid_price']) / 2
+        
+        return quotes_df
+        
+    except Exception as e:
+        logger.error(f"Error processing quotes for {ticker}: {str(e)}")
+        return pd.DataFrame()
+
 def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray:
     """Load and process data for a single ticker with parallel S3 loading"""
     try:
@@ -81,6 +140,23 @@ def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray
         combined_df = pd.concat(dfs, ignore_index=False).sort_index()
         logger.info(f"Combined data shape for {ticker}: {combined_df.shape}")
         
+        # Load and merge quote data
+        quotes_df = process_quotes(ticker, data_loader.bucket, s3)
+        if not quotes_df.empty:
+            combined_df = pd.merge(
+                combined_df,
+                quotes_df[['bid_ask_spread', 'mid_price']],
+                left_index=True,
+                right_index=True,
+                how='outer'
+            ).ffill()
+        
+        # Add missing columns with defaults
+        if 'days_since_dividend' not in combined_df.columns:
+            combined_df['days_since_dividend'] = 3650
+        if 'split_ratio' not in combined_df.columns:
+            combined_df['split_ratio'] = 1.0
+            
         # Create sequences
         sequences = data_loader.create_sequences(combined_df)
         logger.info(f"Created sequences for {ticker} with shape {sequences.shape}")
@@ -88,6 +164,7 @@ def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray
         # Clear memory
         del dfs
         del combined_df
+        del quotes_df
         gc.collect()
         
         return sequences

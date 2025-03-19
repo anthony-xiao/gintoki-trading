@@ -62,6 +62,15 @@ class EnhancedSHAPOptimizer:
             
         return self.model.predict(x, verbose=0)
 
+    def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
+        """Reshape 3D data to 2D for SHAP computation"""
+        n_samples, n_timesteps, n_features = data.shape
+        return data.reshape(n_samples * n_timesteps, n_features)
+
+    def _reshape_back_to_3d(self, data: np.ndarray, original_shape: tuple) -> np.ndarray:
+        """Reshape 2D SHAP values back to 3D"""
+        return data.reshape(original_shape)
+
     def _get_latest_regime_model(self):
         """Get the latest regime model path from S3"""
         s3 = boto3.client('s3')
@@ -194,14 +203,21 @@ class EnhancedSHAPOptimizer:
         """Compute SHAP values with detailed logging and error handling"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         
+        # Store original shape
+        original_shape = data.shape
+        
+        # Reshape data for SHAP
+        data_2d = self._reshape_for_shap(data)
+        logger.info(f"Reshaped data for SHAP computation: {data_2d.shape}")
+        
         # Process in batches with progress tracking
         batch_size = 32
         shap_values = []
         
         try:
-            for i in tqdm(range(0, len(data), batch_size), 
+            for i in tqdm(range(0, len(data_2d), batch_size), 
                         desc='SHAP Computation', unit='batch'):
-                batch = data[i:i+batch_size].astype('float32')
+                batch = data_2d[i:i+batch_size].astype('float32')
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
                 try:
@@ -223,10 +239,14 @@ class EnhancedSHAPOptimizer:
                     raise
             
             # Combine all SHAP values
-            final_shap = np.concatenate(shap_values)
-            logger.info(f"Successfully computed SHAP values, shape: {final_shap.shape}")
+            final_shap_2d = np.concatenate(shap_values)
+            logger.info(f"Successfully computed SHAP values, shape: {final_shap_2d.shape}")
             
-            return final_shap
+            # Reshape back to 3D
+            final_shap_3d = self._reshape_back_to_3d(final_shap_2d, original_shape)
+            logger.info(f"Reshaped SHAP values back to 3D: {final_shap_3d.shape}")
+            
+            return final_shap_3d
             
         except Exception as e:
             logger.error(f"Critical error in SHAP calculation: {str(e)}")

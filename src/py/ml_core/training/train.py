@@ -58,7 +58,7 @@ def main():
         logger.info("🚀 Starting training pipeline")
         start_time = time.time()
         parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
-        parser.add_argument('--tickers', nargs='+', default=['AMZN', 'TSLA', 'NVDA'])
+        parser.add_argument('--tickers', nargs='+', default=['SCMI'])
         parser.add_argument('--epochs', type=int, default=100)
         parser.add_argument('--shap-samples', type=int, default=2000)
         parser.add_argument('--seq-length', type=int, default=60,
