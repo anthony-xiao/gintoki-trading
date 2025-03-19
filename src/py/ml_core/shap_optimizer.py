@@ -36,9 +36,15 @@ class EnhancedSHAPOptimizer:
         else:
             self.background = self._load_production_background(background_samples)
 
-        # Initialize SHAP explainer
+        # Initialize SHAP explainer with proper reshaping
+        def predict_wrapper(x):
+            # Reshape input to match model's expected shape (None, 60, 10)
+            n_samples = x.shape[0]
+            x_reshaped = x.reshape(n_samples, 60, -1)
+            return self.model.predict(x_reshaped, verbose=0)
+
         self.explainer = shap.KernelExplainer(
-            model=lambda x: self.model.predict(x, verbose=0),
+            model=predict_wrapper,
             data=self.background
         )
         
@@ -145,7 +151,7 @@ class EnhancedSHAPOptimizer:
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
         sequences = self.data_loader.create_sequences(data)
-        # Reshape to 2D for SHAP
+        # Reshape to 2D for SHAP background
         n_samples = min(n_samples, len(sequences))
         background = sequences[-n_samples:].reshape(n_samples, -1)
         return background
@@ -154,7 +160,7 @@ class EnhancedSHAPOptimizer:
         """Load real market data from S3"""
         df = self.data_loader.load_ticker_data('AMZN')
         sequences = self.data_loader.create_sequences(df)
-        # Reshape to 2D for SHAP
+        # Reshape to 2D for SHAP background
         n_samples = min(n_samples, len(sequences))
         background = sequences[-n_samples:].reshape(n_samples, -1)
         return background
