@@ -236,8 +236,19 @@ class EnhancedSHAPOptimizer:
 
     def optimize_features(self, input_data, top_k=15):
         """Profit-focused feature optimization"""
-        data = input_data if isinstance(input_data, np.ndarray) \
-                        else joblib.load(input_data)
+        if isinstance(input_data, str):
+            if input_data.endswith('.npz'):
+                # Load .npz file
+                data = np.load(input_data)
+                if 'X' in data:
+                    data = data['X']
+                else:
+                    raise ValueError(f"No 'X' array found in {input_data}")
+            else:
+                # Try joblib for other formats
+                data = joblib.load(input_data)
+        else:
+            data = input_data  # Treat as pre-loaded array
         
         # Ensure data contains essential features
         for f in self.essential_features:
