@@ -37,11 +37,15 @@ class EnhancedSHAPOptimizer:
             
         logger.info(f"Background data shape: {self.background.shape}")
         
+        # Reshape background data for SHAP
+        self.background_2d = self._reshape_for_shap(self.background)
+        logger.info(f"Reshaped background data shape: {self.background_2d.shape}")
+        
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
             model=lambda x: self.model.predict(x, verbose=0),
-            data=self.background
+            data=self.background_2d
         )
         logger.info("KernelExplainer initialized successfully")
         
@@ -190,6 +194,11 @@ class EnhancedSHAPOptimizer:
         # Reshape data for SHAP
         data_2d = self._reshape_for_shap(data)
         logger.info(f"Reshaped data for SHAP calculation: {data_2d.shape}")
+        
+        # Verify feature count matches background data
+        if data_2d.shape[1] != self.background_2d.shape[1]:
+            raise ValueError(f"Feature count mismatch: input data has {data_2d.shape[1]} features, "
+                           f"background data has {self.background_2d.shape[1]} features")
         
         # Process in batches with progress tracking
         batch_size = 32  # Smaller batch size for KernelExplainer
