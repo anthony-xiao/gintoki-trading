@@ -36,15 +36,9 @@ class EnhancedSHAPOptimizer:
         else:
             self.background = self._load_production_background(background_samples)
 
-        # Initialize SHAP explainer with proper reshaping
-        def predict_wrapper(x):
-            # Reshape input to match model's expected shape (None, 60, 10)
-            n_samples = x.shape[0]
-            x_reshaped = x.reshape(n_samples, 60, -1)
-            return self.model.predict(x_reshaped, verbose=0)
-
-        self.explainer = shap.KernelExplainer(
-            model=predict_wrapper,
+        # Initialize SHAP explainer with DeepExplainer
+        self.explainer = shap.DeepExplainer(
+            model=self.model,
             data=self.background
         )
         
@@ -151,45 +145,35 @@ class EnhancedSHAPOptimizer:
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
         sequences = self.data_loader.create_sequences(data)
-        # Reshape to 2D for SHAP background
+        # Keep 3D structure for DeepExplainer
         n_samples = min(n_samples, len(sequences))
-        background = sequences[-n_samples:].reshape(n_samples, -1)
-        return background
+        return sequences[-n_samples:]
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3"""
         df = self.data_loader.load_ticker_data('AMZN')
         sequences = self.data_loader.create_sequences(df)
-        # Reshape to 2D for SHAP background
+        # Keep 3D structure for DeepExplainer
         n_samples = min(n_samples, len(sequences))
-        background = sequences[-n_samples:].reshape(n_samples, -1)
-        return background
-        
-        # Test line
-        # return np.random.randn(n_samples, 60, 20)  # Match production shape
+        return sequences[-n_samples:]
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with GPU acceleration and precision control"""
         # Enable mixed precision for 2.1x speedup
         tf.keras.mixed_precision.set_global_policy('mixed_float16')
         
-        # Reshape data for SHAP (flatten time dimension)
-        original_shape = data.shape
-        n_samples = original_shape[0]
-        data_reshaped = data.reshape(n_samples, -1)
-        
         batch_size = 128  # Optimized for A10G/A100 GPU memory
         shap_values = []
         
         # Process in batches with progress tracking
-        for i in tqdm(range(0, len(data_reshaped), batch_size), 
+        for i in tqdm(range(0, len(data), batch_size), 
                     desc='SHAP Computation', unit='batch'):
-            batch = data_reshaped[i:i+batch_size].astype('float32')
+            batch = data[i:i+batch_size].astype('float32')
             batch_shap = self.explainer.shap_values(
                 batch,
-                nsamples=100  # Balance between speed and accuracy
+                check_additivity=False  # Faster computation
             )
-            # KernelExplainer returns a list of arrays for each output
+            # DeepExplainer returns a list of arrays for each output
             if isinstance(batch_shap, list):
                 batch_shap = batch_shap[0]  # Take first output
             shap_values.append(batch_shap)
@@ -197,11 +181,8 @@ class EnhancedSHAPOptimizer:
         # Restore precision policy
         tf.keras.mixed_precision.set_global_policy('float32')
         
-        # Reshape SHAP values back to original dimensions
-        shap_values = np.concatenate(shap_values)
-        shap_values = shap_values.reshape(original_shape)
-        
-        return shap_values
+        # Combine all SHAP values
+        return np.concatenate(shap_values)
 
     def optimize_features(self, input_data, top_k=15):
         """Profit-focused feature optimization"""
