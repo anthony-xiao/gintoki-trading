@@ -1,8 +1,11 @@
 import os
 import numpy as np
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 from src.py.ml_core.shap_optimizer import EnhancedSHAPOptimizer
 from src.py.ml_core.data_loader import EnhancedDataLoader
+import gc
 
 # Configure logging
 logging.basicConfig(
@@ -10,6 +13,20 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+def load_ticker_data(ticker: str, data_loader: EnhancedDataLoader) -> np.ndarray:
+    """Load and process data for a single ticker"""
+    try:
+        df = data_loader.load_ticker_data(ticker)
+        if df is None:
+            logger.warning(f"Failed to load data for {ticker}")
+            return None
+        sequences = data_loader.create_sequences(df)
+        logger.info(f"Loaded {ticker} with shape {sequences.shape}")
+        return sequences
+    except Exception as e:
+        logger.error(f"Error loading {ticker}: {str(e)}")
+        return None
 
 def test_shap_optimization():
     try:
@@ -19,18 +36,44 @@ def test_shap_optimization():
         data_loader = EnhancedDataLoader()
         optimizer = EnhancedSHAPOptimizer(background_samples=100)
         
-        # Load some sample data
-        logger.info("📦 Loading sample data...")
-        df = data_loader.load_ticker_data('AMZN')
-        if df is None:
-            raise ValueError("Failed to load sample data")
+        # Define test tickers
+        test_tickers = ['SMCI']
+        
+        # Load data in parallel
+        logger.info("📦 Loading sample data in parallel...")
+        all_sequences = []
+        
+        with ThreadPoolExecutor(max_workers=30) as executor:
+            # Submit all tasks
+            future_to_ticker = {
+                executor.submit(load_ticker_data, ticker, data_loader): ticker 
+                for ticker in test_tickers
+            }
             
-        # Create sequences
-        sequences = data_loader.create_sequences(df)
-        logger.info(f"Created sequences shape: {sequences.shape}")
+            # Process completed tasks with progress bar
+            for future in tqdm(future_to_ticker, desc="Loading tickers"):
+                ticker = future_to_ticker[future]
+                try:
+                    sequences = future.result()
+                    if sequences is not None:
+                        all_sequences.append(sequences)
+                        logger.info(f"✅ Successfully loaded {ticker}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to load {ticker}: {str(e)}")
+        
+        if not all_sequences:
+            raise ValueError("No data loaded for any tickers")
+        
+        # Combine all sequences
+        combined_sequences = np.concatenate(all_sequences)
+        logger.info(f"📊 Combined sequences shape: {combined_sequences.shape}")
+        
+        # Clear memory
+        del all_sequences
+        gc.collect()
         
         # Save sequences for testing
-        np.savez('test_data.npz', X=sequences)
+        np.savez('test_data.npz', X=combined_sequences)
         logger.info("💾 Saved test data to test_data.npz")
         
         # Run SHAP optimization
