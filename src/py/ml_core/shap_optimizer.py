@@ -37,8 +37,8 @@ class EnhancedSHAPOptimizer:
             self.background = self._load_production_background(background_samples)
 
         # Initialize SHAP explainer
-        self.explainer = shap.GradientExplainer(
-            model=self.model,
+        self.explainer = shap.KernelExplainer(
+            model=lambda x: self.model.predict(x, verbose=0),
             data=self.background
         )
         
@@ -168,8 +168,11 @@ class EnhancedSHAPOptimizer:
         for i in tqdm(range(0, len(data), batch_size), 
                     desc='SHAP Computation', unit='batch'):
             batch = data[i:i+batch_size].astype('float32')
-            batch_shap = self.explainer.shap_values(batch)
-            # GradientExplainer returns a list of arrays for each output
+            batch_shap = self.explainer.shap_values(
+                batch,
+                nsamples=100  # Balance between speed and accuracy
+            )
+            # KernelExplainer returns a list of arrays for each output
             if isinstance(batch_shap, list):
                 batch_shap = batch_shap[0]  # Take first output
             shap_values.append(batch_shap)
