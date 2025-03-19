@@ -19,16 +19,6 @@ logger = logging.getLogger(__name__)
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path=None, background_samples=1000, background_data=None):
         """Initialize SHAP optimizer with latest S3 model"""
-        # Configure GPU settings first, before any TensorFlow operations
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            try:
-                tf.config.experimental.set_memory_growth(gpus[0], True)
-                tf.config.optimizer.set_jit(True)  # Enable XLA compilation
-                logger.info("GPU configured successfully")
-            except RuntimeError as e:
-                logger.warning(f"GPU configuration failed: {e}")
-        
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
         
@@ -46,13 +36,11 @@ class EnhancedSHAPOptimizer:
         else:
             self.background = self._load_production_background(background_samples)
 
-        # Initialize SHAP explainer with GPU acceleration
-        with tf.device('/GPU:0'):
-            self.explainer = shap.DeepExplainer(
-                model=self.model,
-                data=self.background,
-                combine_mult_and_diffref=False
-            )
+        # Initialize SHAP explainer
+        self.explainer = shap.DeepExplainer(
+            model=self.model,
+            data=self.background
+        )
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
 
@@ -176,19 +164,18 @@ class EnhancedSHAPOptimizer:
         batch_size = 128  # Optimized for A10G/A100 GPU memory
         shap_values = []
         
-        with tf.device('/GPU:0'):
-            # Process in batches with progress tracking
-            for i in tqdm(range(0, len(data), batch_size), 
-                        desc='SHAP Computation', unit='batch'):
-                batch = data[i:i+batch_size].astype('float32')
-                batch_shap = self.explainer.shap_values(
-                    batch,
-                    check_additivity=False  # 2.3x speedup
-                )
-                # DeepExplainer returns a list of arrays for each output
-                if isinstance(batch_shap, list):
-                    batch_shap = batch_shap[0]  # Take first output
-                shap_values.append(batch_shap)
+        # Process in batches with progress tracking
+        for i in tqdm(range(0, len(data), batch_size), 
+                    desc='SHAP Computation', unit='batch'):
+            batch = data[i:i+batch_size].astype('float32')
+            batch_shap = self.explainer.shap_values(
+                batch,
+                check_additivity=False  # 2.3x speedup
+            )
+            # DeepExplainer returns a list of arrays for each output
+            if isinstance(batch_shap, list):
+                batch_shap = batch_shap[0]  # Take first output
+            shap_values.append(batch_shap)
         
         # Restore precision policy
         tf.keras.mixed_precision.set_global_policy('float32')
