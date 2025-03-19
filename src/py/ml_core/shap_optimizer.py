@@ -30,23 +30,16 @@ class EnhancedSHAPOptimizer:
         # Download and load model from S3
         self.model = self._load_model_from_s3(model_path)
         
-        # Create a wrapper function for the model that handles 3D input
-        def model_predict(x):
-            # Reshape input if needed (for background samples)
-            if len(x.shape) == 2:
-                x = x.reshape(-1, self.model.input_shape[1], self.model.input_shape[2])
-            return self.model.predict(x, verbose=0)
-        
         # Use provided background data or load it
         if background_data is not None:
             self.background = self._prepare_background(background_data, background_samples)
         else:
             self.background = self._load_production_background(background_samples)
         
-        # Initialize SHAP explainer with KernelExplainer
-        self.explainer = shap.KernelExplainer(
-            model_predict,
-            self.background
+        # Initialize SHAP explainer with DeepExplainer
+        self.explainer = shap.DeepExplainer(
+            model=self.model,
+            data=self.background
         )
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
@@ -167,9 +160,7 @@ class EnhancedSHAPOptimizer:
             indices = np.random.choice(len(sequences), size=min(n_samples, len(sequences)), replace=False)
             sequences = sequences[indices]
         
-        # Reshape background data to 2D for SHAP
-        n_samples, seq_len, n_features = sequences.shape
-        return sequences.reshape(n_samples, seq_len * n_features)
+        return sequences
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3 with efficient sampling"""
@@ -181,26 +172,21 @@ class EnhancedSHAPOptimizer:
         batch_size = 128  # Optimized for memory
         shap_values = []
         
-        # Get original shape
-        n_samples, seq_len, n_features = data.shape
-        
-        # Reshape data to 2D for SHAP
-        data_2d = data.reshape(n_samples, seq_len * n_features)
-        
         # Process in batches with progress tracking
-        for i in tqdm(range(0, len(data_2d), batch_size), 
+        for i in tqdm(range(0, len(data), batch_size), 
                     desc='SHAP Computation', unit='batch'):
-            batch = data_2d[i:i+batch_size]
+            batch = data[i:i+batch_size]
             batch_shap = self.explainer.shap_values(
                 batch,
-                nsamples=100,  # Balance between speed and accuracy
-                silent=True
+                check_additivity=False  # Faster computation
             )
+            # DeepExplainer returns a list of arrays for each output
+            if isinstance(batch_shap, list):
+                batch_shap = batch_shap[0]  # Take first output
             shap_values.append(batch_shap)
         
-        # Combine all SHAP values and reshape back to 3D
-        shap_values = np.concatenate(shap_values)
-        return shap_values.reshape(n_samples, seq_len, n_features)
+        # Combine all SHAP values
+        return np.concatenate(shap_values)
 
     def optimize_features(self, input_data, top_k=15):
         """Profit-focused feature optimization"""
