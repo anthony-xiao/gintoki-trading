@@ -58,12 +58,13 @@ class EnhancedSHAPOptimizer:
             Prefix=prefix
         )
         
-        # Get all versioned models
+        # Get all versioned models, excluding metadata files
         versions = []
         for obj in response.get('Contents', []):
-            if 'regime_model.h5' in obj['Key']:
-                versions.append(obj['Key'])
-                logger.debug(f"Found model: {obj['Key']}")
+            key = obj['Key']
+            if 'regime_model.h5' in key and not key.endswith('.metadata'):
+                versions.append(key)
+                logger.debug(f"Found model: {key}")
         
         if not versions:
             logger.error(f"No models found in s3://{self.registry.bucket}/{prefix}")
