@@ -37,19 +37,30 @@ class EnhancedSHAPOptimizer:
             
         logger.info(f"Background data shape: {self.background.shape}")
         
-        # Reshape background data for SHAP
-        self.background_2d = self._reshape_for_shap(self.background)
-        logger.info(f"Reshaped background data shape: {self.background_2d.shape}")
-        
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
-            model=lambda x: self.model.predict(x, verbose=0),
-            data=self.background_2d
+            model=lambda x: self._predict_3d(x),
+            data=self.background
         )
         logger.info("KernelExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
+
+    def _predict_3d(self, x):
+        """Helper function to handle 3D predictions"""
+        # If input is 2D, reshape to 3D
+        if len(x.shape) == 2:
+            n_samples = x.shape[0]
+            n_features = x.shape[1]
+            n_timesteps = self.background.shape[1]  # Get timesteps from background
+            x = x.reshape(n_samples, n_timesteps, n_features)
+        
+        # Ensure input matches model's expected shape
+        if x.shape[1:] != self.background.shape[1:]:
+            raise ValueError(f"Input shape {x.shape} doesn't match expected shape {self.background.shape}")
+            
+        return self.model.predict(x, verbose=0)
 
     def _get_latest_regime_model(self):
         """Get the latest regime model path from S3"""
@@ -155,7 +166,7 @@ class EnhancedSHAPOptimizer:
         sequences = self.data_loader.create_sequences(data)
         logger.info(f"Created sequences shape: {sequences.shape}")
         
-        # Keep 3D structure for KernelExplainer
+        # Keep 3D structure
         n_samples = min(n_samples, len(sequences))
         background = sequences[-n_samples:]
         logger.info(f"Final background shape: {background.shape}")
@@ -168,46 +179,24 @@ class EnhancedSHAPOptimizer:
         sequences = self.data_loader.create_sequences(df)
         logger.info(f"Created sequences shape: {sequences.shape}")
         
-        # Keep 3D structure for KernelExplainer
+        # Keep 3D structure
         n_samples = min(n_samples, len(sequences))
         background = sequences[-n_samples:]
         logger.info(f"Final background shape: {background.shape}")
         return background
 
-    def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
-        """Reshape 3D data (samples, time_steps, features) to 2D for SHAP"""
-        n_samples, n_timesteps, n_features = data.shape
-        # Reshape to (samples * timesteps, features)
-        return data.reshape(-1, n_features)
-
-    def _reshape_back_to_3d(self, data: np.ndarray, original_shape: tuple) -> np.ndarray:
-        """Reshape 2D SHAP values back to 3D"""
-        return data.reshape(original_shape)
-
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with detailed logging and error handling"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         
-        # Store original shape for later reshaping
-        original_shape = data.shape
-        
-        # Reshape data for SHAP
-        data_2d = self._reshape_for_shap(data)
-        logger.info(f"Reshaped data for SHAP calculation: {data_2d.shape}")
-        
-        # Verify feature count matches background data
-        if data_2d.shape[1] != self.background_2d.shape[1]:
-            raise ValueError(f"Feature count mismatch: input data has {data_2d.shape[1]} features, "
-                           f"background data has {self.background_2d.shape[1]} features")
-        
         # Process in batches with progress tracking
-        batch_size = 32  # Smaller batch size for KernelExplainer
+        batch_size = 32
         shap_values = []
         
         try:
-            for i in tqdm(range(0, len(data_2d), batch_size), 
+            for i in tqdm(range(0, len(data), batch_size), 
                         desc='SHAP Computation', unit='batch'):
-                batch = data_2d[i:i+batch_size].astype('float32')
+                batch = data[i:i+batch_size].astype('float32')
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
                 try:
@@ -229,14 +218,10 @@ class EnhancedSHAPOptimizer:
                     raise
             
             # Combine all SHAP values
-            final_shap_2d = np.concatenate(shap_values)
-            logger.info(f"Successfully computed SHAP values, shape: {final_shap_2d.shape}")
+            final_shap = np.concatenate(shap_values)
+            logger.info(f"Successfully computed SHAP values, shape: {final_shap.shape}")
             
-            # Reshape back to original 3D structure
-            final_shap_3d = self._reshape_back_to_3d(final_shap_2d, original_shape)
-            logger.info(f"Reshaped SHAP values back to original shape: {final_shap_3d.shape}")
-            
-            return final_shap_3d
+            return final_shap
             
         except Exception as e:
             logger.error(f"Critical error in SHAP calculation: {str(e)}")
