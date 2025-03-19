@@ -48,10 +48,10 @@ class EnhancedSHAPOptimizer:
 
         # Initialize SHAP explainer with GPU acceleration
         with tf.device('/GPU:0'):
-            self.explainer = shap.GradientExplainer(
+            self.explainer = shap.DeepExplainer(
                 model=self.model,
                 data=self.background,
-                batch_size=32
+                combine_mult_and_diffref=False
             )
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
@@ -168,27 +168,6 @@ class EnhancedSHAPOptimizer:
         # Test line
         # return np.random.randn(n_samples, 60, 20)  # Match production shape
 
-    # def calculate_shap(self, data):
-        # GradientExplainer handles batches internally
-        return self.explainer.shap_values(
-            data, 
-            nsamples=200,  # Only valid parameters stay
-            # nsamples=1000  # production - adjust based on accuracy needs 
-        )
-
-
-    # def calculate_shap(self, X: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with GPU acceleration"""
-        shap_values = []
-        batch_size = 100
-        
-        with tf.device('/GPU:0'):
-            for i in tqdm(range(0, len(X), batch_size)):
-                batch = X[i:i+batch_size]
-                shap_values.append(self.explainer.shap_values(batch))
-                
-        return np.concatenate(shap_values)
-
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with GPU acceleration and precision control"""
         # Enable mixed precision for 2.1x speedup
@@ -198,45 +177,22 @@ class EnhancedSHAPOptimizer:
         shap_values = []
         
         with tf.device('/GPU:0'):
-            # Warm-up pass to optimize CUDA kernels
-            self.explainer.shap_values(data[:2], nsamples=10)
-            
             # Process in batches with progress tracking
             for i in tqdm(range(0, len(data), batch_size), 
                         desc='SHAP Computation', unit='batch'):
                 batch = data[i:i+batch_size].astype('float32')
                 batch_shap = self.explainer.shap_values(
                     batch,
-                    nsamples=200,  # Balance speed/accuracy
                     check_additivity=False  # 2.3x speedup
                 )
+                # DeepExplainer returns a list of arrays for each output
+                if isinstance(batch_shap, list):
+                    batch_shap = batch_shap[0]  # Take first output
                 shap_values.append(batch_shap)
         
         # Restore precision policy
         tf.keras.mixed_precision.set_global_policy('float32')
         return np.concatenate(shap_values)
-
-
-    # def optimize_features(self, data_path: str, top_k: int = 15) -> np.ndarray:
-    # def optimize_features(self, input_data, top_k=10):
-        # data = joblib.load(data_path)
-        """input_data: np array (n_samples, 60, 20) OR file path string"""
-        if isinstance(input_data, str):
-            data = joblib.load(input_data)
-        else:
-            data = input_data  # Treat as pre-loaded
-        """SHAP-based feature optimization with essential retention"""
-        sample = data[np.random.choice(len(data), 2000, replace=False)]
-        
-        shap_vals = self.calculate_shap(sample)
-        importance = np.abs(shap_vals).mean((0, 1))
-        
-        # Force include essential features
-        essential_idx = [self.data_loader.feature_columns.index(f) 
-                        for f in self.essential_features]
-        importance[essential_idx] += 1000
-        
-        return np.argsort(importance)[-top_k:]
 
     def optimize_features(self, input_data, top_k=15):
         """Profit-focused feature optimization"""
