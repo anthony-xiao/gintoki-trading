@@ -12,6 +12,7 @@ from io import BytesIO
 import logging
 import os
 import tempfile
+from sklearn.model_selection import train_test_split
 
 
 logger = logging.getLogger(__name__)
@@ -28,18 +29,24 @@ class EnhancedSHAPOptimizer:
         
         # Download and load model from S3
         self.model = self._load_model_from_s3(model_path)
-        self.input_name = self.model.layers[0].name
+        
+        # Create a wrapper function for the model that handles 3D input
+        def model_predict(x):
+            # Reshape input if needed (for background samples)
+            if len(x.shape) == 2:
+                x = x.reshape(-1, self.model.input_shape[1], self.model.input_shape[2])
+            return self.model.predict(x, verbose=0)
         
         # Use provided background data or load it
         if background_data is not None:
             self.background = self._prepare_background(background_data, background_samples)
         else:
             self.background = self._load_production_background(background_samples)
-
-        # Initialize SHAP explainer with DeepExplainer
-        self.explainer = shap.DeepExplainer(
-            model=self.model,
-            data=self.background
+        
+        # Initialize SHAP explainer with KernelExplainer
+        self.explainer = shap.KernelExplainer(
+            model_predict,
+            self.background
         )
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
@@ -143,43 +150,45 @@ class EnhancedSHAPOptimizer:
                 logger.warning(f"Error cleaning up temporary file: {str(e)}")
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
-        """Prepare background data from provided DataFrame"""
+        """Prepare background data from provided DataFrame with efficient sampling"""
         sequences = self.data_loader.create_sequences(data)
-        # Keep 3D structure for DeepExplainer
-        n_samples = min(n_samples, len(sequences))
-        return sequences[-n_samples:]
+        
+        # Use stratified sampling if possible
+        if 'regime' in data.columns:
+            labels = data['regime'].values[self.model.input_shape[1]:]
+            _, _, sequences, _ = train_test_split(
+                sequences, labels,
+                test_size=1 - (n_samples/len(sequences)),
+                stratify=labels,
+                random_state=42
+            )
+        else:
+            # Random sampling if no labels available
+            indices = np.random.choice(len(sequences), size=min(n_samples, len(sequences)), replace=False)
+            sequences = sequences[indices]
+        
+        return sequences
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
-        """Load real market data from S3"""
+        """Load real market data from S3 with efficient sampling"""
         df = self.data_loader.load_ticker_data('AMZN')
-        sequences = self.data_loader.create_sequences(df)
-        # Keep 3D structure for DeepExplainer
-        n_samples = min(n_samples, len(sequences))
-        return sequences[-n_samples:]
+        return self._prepare_background(df, n_samples)
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with GPU acceleration and precision control"""
-        # Enable mixed precision for 2.1x speedup
-        tf.keras.mixed_precision.set_global_policy('mixed_float16')
-        
-        batch_size = 128  # Optimized for A10G/A100 GPU memory
+        """Compute SHAP values with efficient batching"""
+        batch_size = 128  # Optimized for memory
         shap_values = []
         
         # Process in batches with progress tracking
         for i in tqdm(range(0, len(data), batch_size), 
                     desc='SHAP Computation', unit='batch'):
-            batch = data[i:i+batch_size].astype('float32')
+            batch = data[i:i+batch_size]
             batch_shap = self.explainer.shap_values(
                 batch,
-                check_additivity=False  # Faster computation
+                nsamples=100,  # Balance between speed and accuracy
+                silent=True
             )
-            # DeepExplainer returns a list of arrays for each output
-            if isinstance(batch_shap, list):
-                batch_shap = batch_shap[0]  # Take first output
             shap_values.append(batch_shap)
-        
-        # Restore precision policy
-        tf.keras.mixed_precision.set_global_policy('float32')
         
         # Combine all SHAP values
         return np.concatenate(shap_values)
@@ -205,7 +214,7 @@ class EnhancedSHAPOptimizer:
             assert f in self.data_loader.feature_columns, \
                 f"Mandatory feature {f} missing!"
         
-        # Compute SHAP with GPU acceleration
+        # Compute SHAP with efficient batching
         shap_vals = self.calculate_shap(data)
         
         # Average SHAP values across time dimension
