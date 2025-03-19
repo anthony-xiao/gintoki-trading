@@ -10,6 +10,7 @@ import pandas as pd
 import boto3
 from io import BytesIO
 import logging
+import os
 
 
 logger = logging.getLogger(__name__)
@@ -94,20 +95,52 @@ class EnhancedSHAPOptimizer:
         if len(raw_data) == 0:
             raise ValueError("Downloaded model is empty")
         
-        # Create a new BytesIO object for h5py
-        h5_data = BytesIO(raw_data)
+        # Create a temporary file with proper HDF5 extension
+        with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
+            # Write the raw bytes directly
+            temp_file.write(raw_data)
+            temp_file.flush()  # Ensure all data is written
+            temp_path = temp_file.name
+            logger.info(f"Created temporary file at {temp_path}")
         
         try:
-            # Load model directly from memory using h5py
-            import h5py
-            with h5py.File(h5_data, 'r') as f:
-                logger.info("Successfully opened HDF5 file in memory")
-                model = tf.keras.models.load_model(f)
-                logger.info("Model loaded successfully")
-                return model
+            # Verify file exists and has content
+            if not os.path.exists(temp_path):
+                raise FileNotFoundError(f"Temporary file not created at {temp_path}")
+            
+            file_size = os.path.getsize(temp_path)
+            logger.info(f"Temporary file size: {file_size} bytes")
+            
+            if file_size == 0:
+                raise ValueError("Temporary file is empty")
+            
+            # Try to read the first few bytes to verify it's a valid HDF5 file
+            with open(temp_path, 'rb') as f:
+                header = f.read(8)
+                logger.info(f"File header (hex): {header.hex()}")
+            
+            # Load model from temporary file
+            logger.info("Loading model from temporary file...")
+            model = tf.keras.models.load_model(temp_path)
+            logger.info("Model loaded successfully")
+            return model
         except Exception as e:
             logger.error(f"Error loading model: {str(e)}")
+            # Log the first few bytes of the file to help diagnose the issue
+            try:
+                with open(temp_path, 'rb') as f:
+                    header = f.read(32)
+                    logger.error(f"File header (hex): {header.hex()}")
+            except Exception as read_error:
+                logger.error(f"Could not read file header: {str(read_error)}")
             raise
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_path)
+                logger.info("Temporary file cleaned up")
+            except Exception as e:
+                logger.warning(f"Error cleaning up temporary file: {str(e)}")
 
     def _prepare_background(self, data: pd.DataFrame, n_samples: int) -> np.ndarray:
         """Prepare background data from provided DataFrame"""
