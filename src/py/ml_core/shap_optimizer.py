@@ -37,7 +37,7 @@ class EnhancedSHAPOptimizer:
             self.background = self._load_production_background(background_samples)
 
         # Initialize SHAP explainer
-        self.explainer = shap.DeepExplainer(
+        self.explainer = shap.GradientExplainer(
             model=self.model,
             data=self.background
         )
@@ -172,7 +172,7 @@ class EnhancedSHAPOptimizer:
                 batch,
                 check_additivity=False  # 2.3x speedup
             )
-            # DeepExplainer returns a list of arrays for each output
+            # GradientExplainer returns a list of arrays for each output
             if isinstance(batch_shap, list):
                 batch_shap = batch_shap[0]  # Take first output
             shap_values.append(batch_shap)
