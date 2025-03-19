@@ -175,7 +175,12 @@ class EnhancedSHAPOptimizer:
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3"""
         logger.info(f"Loading production background data with {n_samples} samples")
-        df = self.data_loader.load_ticker_data('AMZN')
+        # The ticker should be passed in from train.py's args.tickers
+        # But it seems the ticker attribute is not being set properly
+        if not hasattr(self, 'ticker') or self.ticker is None:
+            logger.warning("No ticker specified, defaulting to SMCI")
+            self.ticker = 'SMCI'
+        df = self.data_loader.load_ticker_data(self.ticker)
         sequences = self.data_loader.create_sequences(df)
         logger.info(f"Created sequences shape: {sequences.shape}")
         
