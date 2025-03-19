@@ -170,18 +170,35 @@ class EnhancedSHAPOptimizer:
         logger.info(f"Final background shape: {background.shape}")
         return background
 
+    def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
+        """Reshape 3D data (samples, time_steps, features) to 2D for SHAP"""
+        n_samples, n_timesteps, n_features = data.shape
+        # Reshape to (samples * timesteps, features)
+        return data.reshape(-1, n_features)
+
+    def _reshape_back_to_3d(self, data: np.ndarray, original_shape: tuple) -> np.ndarray:
+        """Reshape 2D SHAP values back to 3D"""
+        return data.reshape(original_shape)
+
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
         """Compute SHAP values with detailed logging and error handling"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
+        
+        # Store original shape for later reshaping
+        original_shape = data.shape
+        
+        # Reshape data for SHAP
+        data_2d = self._reshape_for_shap(data)
+        logger.info(f"Reshaped data for SHAP calculation: {data_2d.shape}")
         
         # Process in batches with progress tracking
         batch_size = 32  # Smaller batch size for KernelExplainer
         shap_values = []
         
         try:
-            for i in tqdm(range(0, len(data), batch_size), 
+            for i in tqdm(range(0, len(data_2d), batch_size), 
                         desc='SHAP Computation', unit='batch'):
-                batch = data[i:i+batch_size].astype('float32')
+                batch = data_2d[i:i+batch_size].astype('float32')
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
                 try:
@@ -203,9 +220,14 @@ class EnhancedSHAPOptimizer:
                     raise
             
             # Combine all SHAP values
-            final_shap = np.concatenate(shap_values)
-            logger.info(f"Successfully computed SHAP values, final shape: {final_shap.shape}")
-            return final_shap
+            final_shap_2d = np.concatenate(shap_values)
+            logger.info(f"Successfully computed SHAP values, shape: {final_shap_2d.shape}")
+            
+            # Reshape back to original 3D structure
+            final_shap_3d = self._reshape_back_to_3d(final_shap_2d, original_shape)
+            logger.info(f"Reshaped SHAP values back to original shape: {final_shap_3d.shape}")
+            
+            return final_shap_3d
             
         except Exception as e:
             logger.error(f"Critical error in SHAP calculation: {str(e)}")
@@ -243,7 +265,7 @@ class EnhancedSHAPOptimizer:
             shap_vals = self.calculate_shap(data)
             logger.info(f"SHAP values computed, shape: {shap_vals.shape}")
             
-            # Calculate feature importance
+            # Calculate feature importance (average across time steps)
             importance = np.abs(shap_vals).mean(axis=1).mean(axis=0)
             logger.info(f"Computed feature importance shape: {importance.shape}")
             
