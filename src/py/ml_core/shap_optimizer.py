@@ -168,10 +168,7 @@ class EnhancedSHAPOptimizer:
         for i in tqdm(range(0, len(data), batch_size), 
                     desc='SHAP Computation', unit='batch'):
             batch = data[i:i+batch_size].astype('float32')
-            batch_shap = self.explainer.shap_values(
-                batch,
-                check_additivity=False  # 2.3x speedup
-            )
+            batch_shap = self.explainer.shap_values(batch)
             # GradientExplainer returns a list of arrays for each output
             if isinstance(batch_shap, list):
                 batch_shap = batch_shap[0]  # Take first output
