@@ -18,10 +18,11 @@ logger = logging.getLogger(__name__)
 
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path: Optional[str] = None, background_samples: int = 1000, 
-                 background_data: Optional[pd.DataFrame] = None, ticker: str = 'SMCI'):
+                 background_data: Optional[pd.DataFrame] = None, ticker: str = 'SMCI',
+                 data_loader: Optional[EnhancedDataLoader] = None):
         """Initialize SHAP optimizer for day trading"""
         self.registry = EnhancedModelRegistry()
-        self.data_loader = EnhancedDataLoader()
+        self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
         self.ticker = ticker  # Store ticker
         
         # Day trading specific features
@@ -54,18 +55,22 @@ class EnhancedSHAPOptimizer:
         # Create masker for feature permutation
         masker = shap.maskers.Independent(data=background_data)
         
+        # Calculate required max_evals based on feature count
+        required_evals = 2 * len(self.feature_columns) + 1
+        logger.info(f"Setting max_evals to {required_evals} for {len(self.feature_columns)} features")
+        
         self.regime_explainer = shap.PermutationExplainer(
             model=self._predict_regime,
             data=background_data,
             masker=masker,
-            max_evals=100
+            max_evals=required_evals
         )
         
         self.trend_explainer = shap.PermutationExplainer(
             model=self._predict_trend,
             data=background_data,
             masker=masker,
-            max_evals=100
+            max_evals=required_evals
         )
         
         logger.info("SHAP optimizer initialized with trading-specific features")

@@ -181,7 +181,8 @@ def main():
         optimizer = EnhancedSHAPOptimizer(
             background_data=combined_data,
             background_samples=args.shap_samples,
-            ticker=args.tickers[0]  # Use the first ticker for SHAP optimization
+            ticker=args.tickers[0],  # Use the first ticker for SHAP optimization
+            data_loader=loader  # Pass the existing data loader instance
         )
         
         # Get optimized features
