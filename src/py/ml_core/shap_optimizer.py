@@ -32,9 +32,9 @@ class EnhancedSHAPOptimizer:
         self.model = self._load_model_from_s3(model_path)
         self.input_name = self.model.layers[0].name
         
-        # Log model input shape
-        input_shape = self.model.layers[0].input_shape
-        logger.info(f"Model input shape: {input_shape}")
+        # # Log model input shape - fixed for newer TF versions
+        # input_shape = self.model.layers[0].output_shape[1:]  # Get shape without batch dimension
+        # logger.info(f"Model input shape: {input_shape}")
         
         # Use provided background data or load it
         if background_data is not None:
