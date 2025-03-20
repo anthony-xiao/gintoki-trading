@@ -202,11 +202,14 @@ class EnhancedDataLoader:
         logger.info(f" - NaNs: {merged.isna().sum().sum()}")
         logger.info(f" - Date range: {merged.index.min()} to {merged.index.max()}")
 
-        # Create default spread columns if missing
+        # Create default spread and mid_price columns if missing
         if 'bid_ask_spread' not in merged:
             merged['bid_ask_spread'] = 0.001  # Default spread
-            merged['mid_price'] = merged['close']
             logger.warning(f"Using default spreads for {ticker}")
+        
+        if 'mid_price' not in merged:
+            merged['mid_price'] = merged['close']  # Use close price as mid price
+            logger.warning(f"Using close price as mid price for {ticker}")
 
         # Apply feature mask if available
         if self.feature_mask is not None:
@@ -390,8 +393,6 @@ class EnhancedDataLoader:
             logger.error(f"Corporate action merge failed: {str(e)}")
             return df  # Return DF with safe defaults
 
-
-
     def _process_quotes(self, ticker: str) -> pd.DataFrame:
         """Process raw quote data into spread features with robust error handling"""
         logger = logging.getLogger("training")
@@ -403,7 +404,9 @@ class EnhancedDataLoader:
             
             if quotes.empty:
                 logger.warning(f"⚠️ No quote data found for {ticker}")
-                return pd.DataFrame()
+                # Create empty DataFrame with required columns
+                return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size', 
+                                          'bid_ask_spread', 'mid_price'])
 
             # Validate quote schema
             required_columns = {
@@ -415,7 +418,9 @@ class EnhancedDataLoader:
             
             if missing_cols:
                 logger.error(f"🚫 Missing quote columns: {missing_cols}")
-                return pd.DataFrame()
+                # Create empty DataFrame with required columns
+                return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size', 
+                                          'bid_ask_spread', 'mid_price'])
 
             # Convert timestamp
             quotes['timestamp'] = pd.to_datetime(
@@ -435,7 +440,7 @@ class EnhancedDataLoader:
                 'ask_size': 'sum'
             })
             
-            # Calculate spread features
+            # Calculate spread features and mid price
             quotes_processed = resampled.assign(
                 bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
                 mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
@@ -447,7 +452,9 @@ class EnhancedDataLoader:
         except Exception as e:
             logger.error(f"🔥 Quote processing failed: {str(e)}")
             logger.debug("Stack trace:", exc_info=True)
-            return pd.DataFrame()  # Return empty to continue pipeline
+            # Return empty DataFrame with required columns
+            return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size', 
+                                      'bid_ask_spread', 'mid_price'])
 
     def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
         """Create strictly uniform sequences with feature masking"""
