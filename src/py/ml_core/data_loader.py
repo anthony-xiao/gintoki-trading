@@ -31,7 +31,7 @@ class EnhancedDataLoader:
         # Define base features (from raw data)
         self.base_feature_columns = [
             'open', 'high', 'low', 'close', 'volume', 'vwap',
-            'bid_ask_spread', 'days_since_dividend', 'split_ratio'
+            'bid_ask_spread', 'days_since_dividend', 'split_ratio', 'mid_price'
         ]
         
         # Define technical indicators

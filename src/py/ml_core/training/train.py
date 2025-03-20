@@ -51,7 +51,7 @@ logger = configure_logging()
 # Configure feature columns exactly as requested
 FEATURE_COLUMNS = [
     'open', 'high', 'low', 'close', 'volume', 'vwap',
-    'days_since_dividend', 'split_ratio', 'bid_ask_spread', 'mid_price'
+    'bid_ask_spread', 'days_since_dividend', 'split_ratio', 'mid_price'
 ]
 
 def main():
