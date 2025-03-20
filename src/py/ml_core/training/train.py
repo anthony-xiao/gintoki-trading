@@ -141,13 +141,24 @@ def main():
     data_loader = EnhancedDataLoader()
     
     # Load and preprocess data with tf.data.Dataset
+    logger.info(f"Loading data for ticker: {args.tickers[0]}")
+    ticker_data = data_loader.load_ticker_data(args.tickers[0])
+    
+    if ticker_data is None or ticker_data.empty:
+        logger.error(f"No data found for ticker {args.tickers[0]}. Please check if the data exists in S3.")
+        return
+    
+    logger.info(f"Loaded data shape: {ticker_data.shape}")
+    logger.info(f"Available columns: {ticker_data.columns.tolist()}")
+    
+    # Create datasets
     train_data = data_loader.create_tf_dataset(
-        data_loader.load_ticker_data(args.tickers[0]),
+        ticker_data,
         window=args.sequence_length
     )
     
     val_data = data_loader.create_tf_dataset(
-        data_loader.load_ticker_data(args.tickers[0]),
+        ticker_data,
         window=args.sequence_length
     )
     
