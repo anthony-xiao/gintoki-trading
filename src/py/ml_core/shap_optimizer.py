@@ -119,15 +119,16 @@ class EnhancedSHAPOptimizer:
             data = self._load_input_data(input_data)
             logger.info(f"Loaded data shape: {data.shape}")
             
-            # Calculate required max_evals based on feature count
+            # Calculate required number of permutations based on feature count
             required_evals = 2 * len(self.feature_columns) + 1
-            logger.info(f"Using max_evals={required_evals} for {len(self.feature_columns)} features")
+            npermutations = required_evals // len(self.feature_columns)  # Calculate permutations per feature
+            logger.info(f"Using {npermutations} permutations per feature for {len(self.feature_columns)} features")
             
             # Compute SHAP values for both models
             logger.info("Computing regime SHAP values...")
-            regime_shap = self.regime_explainer.shap_values(data)
+            regime_shap = self.regime_explainer.shap_values(data, npermutations=npermutations)
             logger.info("Computing trend SHAP values...")
-            trend_shap = self.trend_explainer.shap_values(data)
+            trend_shap = self.trend_explainer.shap_values(data, npermutations=npermutations)
             
             # Combine SHAP values with trading-specific weights
             importance = self._combine_shap_values(regime_shap, trend_shap)
