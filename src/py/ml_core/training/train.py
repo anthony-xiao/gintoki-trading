@@ -15,6 +15,7 @@ import time
 from logging.handlers import RotatingFileHandler
 import gc
 import tensorflow as tf
+import json
 
 # Configure logging at the top
 def configure_logging():
@@ -54,10 +55,78 @@ FEATURE_COLUMNS = [
     'days_since_dividend', 'split_ratio', 'bid_ask_spread', 'mid_price'
 ]
 
+def parse_args():
+    """Parse command line arguments"""
+    parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
+    parser.add_argument('--tickers', nargs='+', default=['SCMI'],
+                      help='List of tickers to train on')
+    parser.add_argument('--epochs', type=int, default=100,
+                      help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=32,
+                      help='Training batch size')
+    parser.add_argument('--sequence-length', type=int, default=60,
+                      help='Transformer sequence length')
+    parser.add_argument('--num-classes', type=int, default=3,
+                      help='Number of output classes')
+    parser.add_argument('--learning-rate', type=float, default=0.001,
+                      help='Initial learning rate')
+    parser.add_argument('--run-shap', action='store_true',
+                      help='Run SHAP optimization')
+    parser.add_argument('--log-level', type=str, default='INFO',
+                      choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                      help='Logging level')
+    return parser.parse_args()
+
+def setup_logging():
+    """Setup logging configuration"""
+    logger = logging.getLogger("training")
+    logger.setLevel(logging.INFO)
+    
+    # Console handler with progress formatting
+    console_handler = logging.StreamHandler()
+    console_format = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    console_handler.setFormatter(console_format)
+    
+    # File handler with detailed logging
+    file_handler = RotatingFileHandler(
+        'training.log', 
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    file_format = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(module)s - %(message)s"
+    )
+    file_handler.setFormatter(file_format)
+
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+    return logger
+
+def save_model_and_history(model, history, args):
+    """Save model and training history"""
+    # Save model
+    model_path = 'src/py/ml_core/models/regime_model.h5'
+    model.save(model_path)
+    logger.info(f"Model saved to {model_path}")
+    
+    # Save training history
+    history_path = 'training_history.json'
+    with open(history_path, 'w') as f:
+        json.dump(history.history, f)
+    logger.info(f"Training history saved to {history_path}")
+    
+    # Save to S3
+    registry = EnhancedModelRegistry()
+    s3_key = registry.save_enhanced_model(model_path, 'volatility')
+    logger.info(f"Model saved to S3: {s3_key}")
+
 def main():
     """Main training function with performance optimizations"""
     args = parse_args()
-    setup_logging()
+    logger = setup_logging()
     
     # Enable mixed precision training
     tf.keras.mixed_precision.set_global_policy('mixed_float16')
