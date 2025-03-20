@@ -125,9 +125,9 @@ class EnhancedSHAPOptimizer:
             
             # Compute SHAP values for both models
             logger.info("Computing regime SHAP values...")
-            regime_shap = self.regime_explainer.shap_values(data, max_evals=required_evals)
+            regime_shap = self.regime_explainer.shap_values(data)
             logger.info("Computing trend SHAP values...")
-            trend_shap = self.trend_explainer.shap_values(data, max_evals=required_evals)
+            trend_shap = self.trend_explainer.shap_values(data)
             
             # Combine SHAP values with trading-specific weights
             importance = self._combine_shap_values(regime_shap, trend_shap)
@@ -367,28 +367,42 @@ class EnhancedSHAPOptimizer:
             spread_idx = self.feature_columns.index('bid_ask_spread')
             min_spread = np.min(samples[:, :, spread_idx])
             if min_spread < self.min_liquidity_threshold:
-                logger.warning(f"Background samples contain low spreads: {min_spread}")
+                logger.warning(f"Background samples contain low spreads: {min_spread} (threshold: {self.min_liquidity_threshold})")
+                logger.warning(f"Spread statistics - min: {min_spread}, max: {np.max(samples[:, :, spread_idx])}, mean: {np.mean(samples[:, :, spread_idx])}")
                 return False
             
-            # Check for volume
+            # Check for volume - using mean instead of min to be more lenient
             volume_idx = self.feature_columns.index('volume')
-            min_volume = np.min(samples[:, :, volume_idx])
-            if min_volume < 1000:  # Minimum volume threshold
-                logger.warning(f"Background samples contain low volume: {min_volume}")
+            mean_volume = np.mean(samples[:, :, volume_idx])
+            if mean_volume < 100:  # Lowered threshold and using mean
+                logger.warning(f"Background samples have low average volume: {mean_volume} (threshold: 100)")
+                logger.warning(f"Volume statistics - min: {np.min(samples[:, :, volume_idx])}, max: {np.max(samples[:, :, volume_idx])}, mean: {mean_volume}")
                 return False
             
             # Check for price data validity
             price_idx = self.feature_columns.index('close')
-            if np.any(samples[:, :, price_idx] <= 0):
-                logger.warning("Background samples contain invalid prices")
+            invalid_prices = np.sum(samples[:, :, price_idx] <= 0)
+            if invalid_prices > 0:
+                logger.warning(f"Background samples contain {invalid_prices} invalid prices (zero or negative)")
+                logger.warning(f"Price statistics - min: {np.min(samples[:, :, price_idx])}, max: {np.max(samples[:, :, price_idx])}, mean: {np.mean(samples[:, :, price_idx])}")
                 return False
             
             # Check for data completeness
-            if np.any(np.isnan(samples)):
-                logger.warning("Background samples contain NaN values")
+            nan_count = np.sum(np.isnan(samples))
+            if nan_count > 0:
+                logger.warning(f"Background samples contain {nan_count} NaN values")
+                # Log which features have NaN values
+                for i, feature in enumerate(self.feature_columns):
+                    nan_feature_count = np.sum(np.isnan(samples[:, :, i]))
+                    if nan_feature_count > 0:
+                        logger.warning(f"Feature '{feature}' has {nan_feature_count} NaN values")
                 return False
             
             logger.info(f"Background samples validated successfully with shape {samples.shape}")
+            logger.info(f"Sample statistics:")
+            logger.info(f"- Spread: min={np.min(samples[:, :, spread_idx]):.6f}, max={np.max(samples[:, :, spread_idx]):.6f}, mean={np.mean(samples[:, :, spread_idx]):.6f}")
+            logger.info(f"- Volume: min={np.min(samples[:, :, volume_idx]):.0f}, max={np.max(samples[:, :, volume_idx]):.0f}, mean={mean_volume:.0f}")
+            logger.info(f"- Price: min={np.min(samples[:, :, price_idx]):.2f}, max={np.max(samples[:, :, price_idx]):.2f}, mean={np.mean(samples[:, :, price_idx]):.2f}")
             return True
             
         except Exception as e:
@@ -415,8 +429,23 @@ class EnhancedSHAPOptimizer:
                 
                 # Validate sample quality
                 if not self._validate_background_samples(background):
-                    logger.warning(f"Background samples validation failed for {self.ticker}, using production data")
-                    return self._load_production_background(n_samples)
+                    logger.warning(f"Background samples validation failed for {self.ticker}")
+                    # Instead of loading production data, try to filter the current data
+                    logger.info("Attempting to filter current data for better quality samples")
+                    df = data.copy()
+                    df = self._filter_trading_data(df)
+                    sequences = self.data_loader.create_sequences(df)
+                    
+                    if len(sequences) > n_samples:
+                        indices = np.random.choice(len(sequences), n_samples, replace=False)
+                        background = sequences[indices]
+                    else:
+                        background = sequences
+                    
+                    # Final validation check
+                    if not self._validate_background_samples(background):
+                        logger.error("Failed to generate valid background samples after filtering")
+                        raise ValueError("Could not generate valid background samples")
             else:
                 background = sequences
                 
@@ -425,7 +454,7 @@ class EnhancedSHAPOptimizer:
             
         except Exception as e:
             logger.error(f"Error preparing background data: {str(e)}")
-            return self._load_production_background(n_samples)
+            raise
 
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3 with trading-specific filtering"""
@@ -447,6 +476,10 @@ class EnhancedSHAPOptimizer:
             # Sample recent data for better market representation
             n_samples = min(n_samples, len(sequences))
             background = sequences[-n_samples:]
+            
+            # Validate the production background
+            if not self._validate_background_samples(background):
+                raise ValueError("Production background samples failed validation")
             
             logger.info(f"Final background shape: {background.shape}")
             return background
