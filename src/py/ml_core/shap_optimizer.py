@@ -39,6 +39,11 @@ class EnhancedSHAPOptimizer:
         self.volume_weight = 1.5              # Weight for volume features
         
         # Load models
+        if model_path is None:
+            logger.info("No model path provided, fetching latest regime model from S3")
+            model_path = self._get_latest_regime_model()
+            logger.info(f"Using latest regime model: {model_path}")
+        
         self.regime_model = self._load_model_from_s3(model_path)
         self.transformer_model = self._load_transformer_model()
         
@@ -226,73 +231,83 @@ class EnhancedSHAPOptimizer:
             
         return f"s3://{self.registry.bucket}/{latest_version}"
 
-    def _load_model_from_s3(self, s3_path):
+    def _load_model_from_s3(self, s3_path: str) -> tf.keras.Model:
         """Load model from S3 into memory"""
         s3 = boto3.client('s3')
         
-        # Parse S3 path
-        bucket = s3_path.split('/')[2]
-        key = '/'.join(s3_path.split('/')[3:])
-        
-        logger.info(f"Downloading model from s3://{bucket}/{key}")
-        
-        # Download model to memory
-        response = s3.get_object(Bucket=bucket, Key=key)
-        model_data = BytesIO(response['Body'].read())
-        
-        # Get the raw bytes
-        raw_data = model_data.getvalue()
-        logger.info(f"Downloaded model size: {len(raw_data)} bytes")
-        
-        if len(raw_data) == 0:
-            raise ValueError("Downloaded model is empty")
-        
-        # Create a temporary file with proper HDF5 extension
-        with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
-            # Write the raw bytes directly
-            temp_file.write(raw_data)
-            temp_file.flush()  # Ensure all data is written
-            temp_path = temp_file.name
-            logger.info(f"Created temporary file at {temp_path}")
-        
         try:
-            # Verify file exists and has content
-            if not os.path.exists(temp_path):
-                raise FileNotFoundError(f"Temporary file not created at {temp_path}")
+            # If path doesn't start with s3://, treat as local path
+            if not s3_path.startswith('s3://'):
+                logger.info(f"Loading model from local path: {s3_path}")
+                return tf.keras.models.load_model(s3_path)
             
-            file_size = os.path.getsize(temp_path)
-            logger.info(f"Temporary file size: {file_size} bytes")
+            # Parse S3 path
+            bucket = s3_path.split('/')[2]
+            key = '/'.join(s3_path.split('/')[3:])
             
-            if file_size == 0:
-                raise ValueError("Temporary file is empty")
+            logger.info(f"Downloading model from s3://{bucket}/{key}")
             
-            # Try to read the first few bytes to verify it's a valid HDF5 file
-            with open(temp_path, 'rb') as f:
-                header = f.read(8)
-                logger.info(f"File header (hex): {header.hex()}")
+            # Download model to memory
+            response = s3.get_object(Bucket=bucket, Key=key)
+            model_data = BytesIO(response['Body'].read())
             
-            # Load model from temporary file
-            logger.info("Loading model from temporary file...")
-            model = tf.keras.models.load_model(temp_path)
-            logger.info("Model loaded successfully")
-            return model
-        except Exception as e:
-            logger.error(f"Error loading model: {str(e)}")
-            # Log the first few bytes of the file to help diagnose the issue
+            # Get the raw bytes
+            raw_data = model_data.getvalue()
+            logger.info(f"Downloaded model size: {len(raw_data)} bytes")
+            
+            if len(raw_data) == 0:
+                raise ValueError("Downloaded model is empty")
+            
+            # Create a temporary file with proper HDF5 extension
+            with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
+                # Write the raw bytes directly
+                temp_file.write(raw_data)
+                temp_file.flush()  # Ensure all data is written
+                temp_path = temp_file.name
+                logger.info(f"Created temporary file at {temp_path}")
+            
             try:
+                # Verify file exists and has content
+                if not os.path.exists(temp_path):
+                    raise FileNotFoundError(f"Temporary file not created at {temp_path}")
+                
+                file_size = os.path.getsize(temp_path)
+                logger.info(f"Temporary file size: {file_size} bytes")
+                
+                if file_size == 0:
+                    raise ValueError("Temporary file is empty")
+                
+                # Try to read the first few bytes to verify it's a valid HDF5 file
                 with open(temp_path, 'rb') as f:
-                    header = f.read(32)
-                    logger.error(f"File header (hex): {header.hex()}")
-            except Exception as read_error:
-                logger.error(f"Could not read file header: {str(read_error)}")
-            raise
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_path)
-                logger.info("Temporary file cleaned up")
+                    header = f.read(8)
+                    logger.info(f"File header (hex): {header.hex()}")
+                
+                # Load model from temporary file
+                logger.info("Loading model from temporary file...")
+                model = tf.keras.models.load_model(temp_path)
+                logger.info("Model loaded successfully")
+                return model
             except Exception as e:
-                logger.warning(f"Error cleaning up temporary file: {str(e)}")
+                logger.error(f"Error loading model: {str(e)}")
+                # Log the first few bytes of the file to help diagnose the issue
+                try:
+                    with open(temp_path, 'rb') as f:
+                        header = f.read(32)
+                        logger.error(f"File header (hex): {header.hex()}")
+                except Exception as read_error:
+                    logger.error(f"Could not read file header: {str(read_error)}")
+                raise
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                    logger.info("Temporary file cleaned up")
+                except Exception as e:
+                    logger.warning(f"Error cleaning up temporary file: {str(e)}")
+                    
+        except Exception as e:
+            logger.error(f"Failed to load model: {str(e)}")
+            raise
 
     def _load_transformer_model(self) -> tf.keras.Model:
         """Load transformer model from S3"""
