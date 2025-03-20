@@ -47,27 +47,14 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
-        # Prepare background data for SHAP
-        n_samples = self.background.shape[0]
-        n_timesteps = self.background.shape[1]
-        n_features = self.background.shape[2]
-        
-        # Reshape to 2D for SHAP (samples * timesteps, features)
-        background_2d = self.background.reshape(n_samples * n_timesteps, n_features)
-        logger.info(f"Reshaped background data shape: {background_2d.shape}")
-        
-        # Use k-means to summarize background data
-        background_summary = shap.kmeans(background_2d, k=100)  # Use 100 clusters
-        logger.info(f"Background summary created with {background_summary.data.shape[0]} samples")
-        
-        # Initialize SHAP explainer with KernelExplainer
-        logger.info("Initializing KernelExplainer...")
-        self.explainer = shap.KernelExplainer(
+        # Initialize SHAP explainer with PermutationExplainer
+        logger.info("Initializing PermutationExplainer...")
+        self.explainer = shap.PermutationExplainer(
             model=self._predict_wrapper,
-            data=background_summary.data,  # Use the data attribute of DenseData
-            link="identity"  # Use identity link for better numerical stability
+            data=self.background,
+            max_evals=100  # Limit evaluations for performance
         )
-        logger.info("KernelExplainer initialized successfully")
+        logger.info("PermutationExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
         logger.info(f"Essential features: {self.essential_features}")
@@ -75,27 +62,14 @@ class EnhancedSHAPOptimizer:
     def _predict_wrapper(self, x):
         """Wrapper function to handle predictions with proper shape management"""
         try:
-            # Ensure input is 2D
-            if len(x.shape) == 1:
-                x = x.reshape(1, -1)
-            
-            # Calculate number of timesteps from background data
-            n_timesteps = self.background.shape[1]
-            
-            # Reshape to 3D for model prediction
-            n_samples = x.shape[0]
-            n_features = x.shape[1]
-            
-            # Ensure we have complete sequences
-            if n_features % n_timesteps != 0:
-                raise ValueError(f"Input features ({n_features}) must be divisible by timesteps ({n_timesteps})")
-            
-            # Reshape to 3D
-            x_3d = x.reshape(n_samples, n_timesteps, -1)
-            logger.debug(f"Reshaped input shape: {x_3d.shape}")
+            # Ensure input is 3D
+            if len(x.shape) == 2:
+                x = x.reshape(1, -1, len(self.feature_columns))
+            elif len(x.shape) == 1:
+                x = x.reshape(1, 1, -1)
             
             # Get model predictions
-            predictions = self.model.predict(x_3d, verbose=0)
+            predictions = self.model.predict(x, verbose=0)
             
             # Return only first output for SHAP
             return predictions[:, 0]
@@ -276,14 +250,9 @@ class EnhancedSHAPOptimizer:
                 batch = data[i:i+batch_size]
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
-                # Reshape batch for SHAP computation
-                batch_2d = batch.reshape(-1, len(self.feature_columns))
-                logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
-                
-                # Compute SHAP values with reduced samples for stability
+                # Compute SHAP values
                 batch_shap = self.explainer.shap_values(
-                    batch_2d,
-                    nsamples=100,  # Reduced from 500 for stability
+                    batch,
                     silent=True
                 )
                 
@@ -291,10 +260,8 @@ class EnhancedSHAPOptimizer:
                 if isinstance(batch_shap, list):
                     batch_shap = batch_shap[0]  # Take first output
                 
-                # Reshape back to original batch shape
-                batch_shap_3d = batch_shap.reshape(batch.shape)
-                logger.debug(f"Reshaped SHAP values shape: {batch_shap_3d.shape}")
-                shap_values.append(batch_shap_3d)
+                logger.debug(f"Batch SHAP values shape: {batch_shap.shape}")
+                shap_values.append(batch_shap)
             
             # Combine all batches
             final_shap = np.concatenate(shap_values, axis=0)
