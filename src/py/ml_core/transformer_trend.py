@@ -58,8 +58,8 @@ class TransformerTrendAnalyzer:
         
         self.model.compile(
             optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-            loss='mse',
-            metrics=['mae']
+            loss=tf.keras.losses.MeanSquaredError(),
+            metrics=[tf.keras.metrics.MeanAbsoluteError()]
         )
         
         self.model.fit(
