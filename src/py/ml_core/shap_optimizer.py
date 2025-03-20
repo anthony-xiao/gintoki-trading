@@ -47,11 +47,16 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
+        # Prepare background data for SHAP
+        background_2d = self.background.reshape(-1, len(self.feature_columns))
+        logger.info(f"Reshaped background data shape: {background_2d.shape}")
+        
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
             model=lambda x: self._predict_3d(x)[:, 0],  # Only use first output for SHAP
-            data=self.background.reshape(-1, len(self.feature_columns))
+            data=background_2d,
+            link="identity"  # Use identity link for better numerical stability
         )
         logger.info("KernelExplainer initialized successfully")
         
@@ -203,9 +208,14 @@ class EnhancedSHAPOptimizer:
         sequences = self.data_loader.create_sequences(data)
         logger.info(f"Created sequences shape: {sequences.shape}")
         
-        # Keep 3D structure
-        n_samples = min(n_samples, len(sequences))
-        background = sequences[-n_samples:]
+        # Sample background data
+        if len(sequences) > n_samples:
+            # Randomly sample n_samples sequences
+            indices = np.random.choice(len(sequences), n_samples, replace=False)
+            background = sequences[indices]
+        else:
+            background = sequences
+            
         logger.info(f"Final background shape: {background.shape}")
         return background
 
