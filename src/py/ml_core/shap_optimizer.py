@@ -235,23 +235,14 @@ class EnhancedSHAPOptimizer:
         if len(data.shape) != 3:
             raise ValueError(f"Input data must be 3D, got {len(data.shape)}D")
         
-        # Convert background to DataFrame for SHAP compatibility
-        background_df = pd.DataFrame(
-            self.background.reshape(-1, len(self.feature_columns)),
-            columns=self.feature_columns
-        )
+        # Reshape background data for SHAP
+        background_2d = self.background.reshape(-1, len(self.feature_columns))
+        logger.info(f"Reshaped background data shape: {background_2d.shape}")
         
-        # Create masker with feature names
-        masker = shap.maskers.Independent(
-            data=background_df,
-            max_samples=1000
-        )
-        
-        # Reinitialize explainer with proper parameters
+        # Initialize explainer with background data
         self.explainer = shap.KernelExplainer(
-            model=lambda x: self._predict_3d(x.values.reshape(-1, 60, len(self.feature_columns))),
-            data=masker,
-            feature_names=self.feature_columns
+            model=lambda x: self._predict_3d(x),
+            data=background_2d
         )
         
         # Process in smaller batches with progress tracking
@@ -264,15 +255,13 @@ class EnhancedSHAPOptimizer:
                 batch = data[i:i+batch_size]
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
-                # Convert batch to DataFrame format
-                batch_df = pd.DataFrame(
-                    batch.reshape(-1, len(self.feature_columns)),
-                    columns=self.feature_columns
-                )
+                # Reshape batch for SHAP computation
+                batch_2d = batch.reshape(-1, len(self.feature_columns))
+                logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
                 
                 # Compute SHAP values
                 batch_shap = self.explainer.shap_values(
-                    batch_df,
+                    batch_2d,
                     nsamples=50,
                     silent=True
                 )
@@ -280,10 +269,16 @@ class EnhancedSHAPOptimizer:
                 # Handle multi-output format
                 if isinstance(batch_shap, list):
                     batch_shap = batch_shap[0]  # Take first output
-                    
-                shap_values.append(batch_shap.reshape(batch.shape))
+                
+                # Reshape back to original batch shape
+                batch_shap_3d = batch_shap.reshape(batch.shape)
+                logger.debug(f"Reshaped SHAP values shape: {batch_shap_3d.shape}")
+                shap_values.append(batch_shap_3d)
             
-            return np.concatenate(shap_values, axis=0)
+            # Combine all batches
+            final_shap = np.concatenate(shap_values, axis=0)
+            logger.info(f"Final SHAP values shape: {final_shap.shape}")
+            return final_shap
         
         except Exception as e:
             logger.error(f"SHAP calculation failed: {str(e)}")
