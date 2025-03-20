@@ -50,7 +50,7 @@ class EnhancedSHAPOptimizer:
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
-            model=lambda x: self._predict_3d(x),
+            model=lambda x: self._predict_3d(x)[:, 0],  # Only use first output for SHAP
             data=self.background.reshape(-1, len(self.feature_columns))
         )
         logger.info("KernelExplainer initialized successfully")
