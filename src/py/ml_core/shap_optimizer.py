@@ -58,13 +58,13 @@ class EnhancedSHAPOptimizer:
         
         # Use k-means to summarize background data
         background_summary = shap.kmeans(background_2d, k=100)  # Use 100 clusters
-        logger.info(f"Background summary shape: {background_summary.shape}")
+        logger.info(f"Background summary created with {background_summary.data.shape[0]} samples")
         
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
             model=self._predict_wrapper,
-            data=background_summary,
+            data=background_summary.data,  # Use the data attribute of DenseData
             link="identity"  # Use identity link for better numerical stability
         )
         logger.info("KernelExplainer initialized successfully")
