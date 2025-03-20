@@ -79,9 +79,15 @@ class EnhancedSHAPOptimizer:
         return self.model.predict(x, verbose=0)
 
     def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
-        """Reshape 3D data to 2D for SHAP computation"""
+        """Reshape 3D data to 2D for SHAP computation with feature validation"""
         n_samples, n_timesteps, n_features = data.shape
         logger.info(f"Reshaping 3D data: samples={n_samples}, timesteps={n_timesteps}, features={n_features}")
+        
+        # Validate feature count before reshaping
+        if n_features != len(self.feature_columns):
+            raise ValueError(f"Input features ({n_features}) don't match expected features ({len(self.feature_columns)})")
+        
+        # Preserve feature order during reshape
         reshaped = data.reshape(n_samples * n_timesteps, n_features)
         logger.info(f"Reshaped data shape: {reshaped.shape}")
         return reshaped
@@ -222,70 +228,50 @@ class EnhancedSHAPOptimizer:
         return background
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with detailed logging and error handling"""
+        """Compute SHAP values with dimension validation"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
-        logger.info(f"Data features: {data.shape[-1]}")
         
-        # Validate input data features
-        if data.shape[-1] != len(self.feature_columns):
-            raise ValueError(f"Input data features ({data.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
+        # Validate input dimensions
+        if len(data.shape) != 3:
+            raise ValueError(f"Input data must be 3D, got {len(data.shape)}D")
         
-        # Store original shape
-        original_shape = data.shape
+        # Create SHAP masker to handle temporal structure
+        masker = shap.maskers.Independent(data=self.background, max_samples=1000)
         
-        # Reshape data for SHAP
-        data_2d = self._reshape_for_shap(data)
-        logger.info(f"Reshaped data for SHAP computation: {data_2d.shape}")
-        logger.info(f"2D data features: {data_2d.shape[-1]}")
+        # Reinitialize explainer with proper masker
+        self.explainer = shap.KernelExplainer(
+            model=lambda x: self._predict_3d(x),
+            data=masker,
+            keep_index=True  # Preserve temporal relationships
+        )
         
-        # Process in batches with progress tracking
-        batch_size = 32
+        # Process in smaller batches with progress tracking
+        batch_size = 16  # Reduced from 32 for memory stability
         shap_values = []
         
         try:
-            for i in tqdm(range(0, len(data_2d), batch_size), 
+            for i in tqdm(range(0, len(data), batch_size), 
                         desc='SHAP Computation', unit='batch'):
-                batch = data_2d[i:i+batch_size].astype('float32')
+                batch = data[i:i+batch_size]
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
-                logger.debug(f"Batch features: {batch.shape[-1]}")
                 
-                try:
-                    # Ensure batch has correct number of features
-                    if batch.shape[-1] != len(self.feature_columns):
-                        raise ValueError(f"Batch features ({batch.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
+                # Compute SHAP values using the masker
+                batch_shap = self.explainer.shap_values(
+                    batch,
+                    nsamples=50,  # Reduced samples for stability
+                    silent=True
+                )
+                
+                # Handle multi-output format
+                if isinstance(batch_shap, list):
+                    batch_shap = batch_shap[0]  # Take first output
                     
-                    batch_shap = self.explainer.shap_values(
-                        batch,
-                        nsamples=100,  # Number of samples for background distribution
-                        silent=True  # Suppress progress bars
-                    )
-                    
-                    # KernelExplainer returns a list of arrays for each output
-                    if isinstance(batch_shap, list):
-                        batch_shap = batch_shap[0]  # Take first output
-                    
-                    logger.debug(f"Batch SHAP shape: {batch_shap.shape}")
-                    shap_values.append(batch_shap)
-                    logger.debug(f"Successfully computed SHAP for batch {i//batch_size + 1}")
-                    
-                except Exception as e:
-                    logger.error(f"Error computing SHAP for batch {i//batch_size + 1}: {str(e)}")
-                    logger.error(f"Batch shape: {batch.shape}")
-                    logger.error(f"Batch features: {batch.shape[-1]}")
-                    raise
+                shap_values.append(batch_shap)
             
-            # Combine all SHAP values
-            final_shap_2d = np.concatenate(shap_values)
-            logger.info(f"Successfully computed SHAP values, shape: {final_shap_2d.shape}")
-            
-            # Reshape back to 3D
-            final_shap_3d = self._reshape_back_to_3d(final_shap_2d, original_shape)
-            logger.info(f"Reshaped SHAP values back to 3D: {final_shap_3d.shape}")
-            
-            return final_shap_3d
-            
+            return np.concatenate(shap_values, axis=0)
+        
         except Exception as e:
-            logger.error(f"Critical error in SHAP calculation: {str(e)}")
+            logger.error(f"SHAP calculation failed: {str(e)}")
             raise
 
     def optimize_features(self, input_data, top_k=15):
