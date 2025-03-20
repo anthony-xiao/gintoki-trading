@@ -90,7 +90,7 @@ def main():
         logger.info(f"📊 Total combined data shape: {combined_data.shape}")
 
         # 1. Train volatility detector
-        logger.info("🔍 Phase 1/5: Training volatility detector...")
+        logger.info("🔍 Phase 1/6: Training volatility detector...")
         detector = EnhancedVolatilityDetector(lookback=args.seq_length)
         logger.info(detector)
         detector.train(combined_data, args.epochs)  # Pass data directly
@@ -107,8 +107,8 @@ def main():
         
         logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
 
-        # 2. Prepare data for SHAP and Transformer
-        logger.info("📦 Phase 2/5: Preparing training data...")
+        # 2. Prepare data for Transformer and SHAP
+        logger.info("📦 Phase 2/6: Preparing training data...")
         
         # Validate data exists and has required columns
         if combined_data.empty:
@@ -156,14 +156,28 @@ def main():
         # Align labels with sequences
         y = np.where(combined_data['close'].shift(-1) > combined_data['close'], 1, -1)[window_size:]
 
-        # Save for SHAP and Transformer
+        # Save for Transformer and SHAP
         logger.info("💾 Saving processed data...")
         joblib.dump(X, 'training_data.pkl')
         np.savez('transformer_data.npz', X=X, y=y)
         logger.debug(f"Data shape: {combined_data.shape} | Columns: {combined_data.columns.tolist()}")
 
-        # 3. SHAP feature optimization
-        logger.info("🎯 Phase 3/5: Running SHAP optimization...")
+        # 3. Train initial Transformer Trend Analyzer
+        logger.info("🧠 Phase 3/6: Training initial Transformer trend model...")
+        transformer = TransformerTrendAnalyzer(
+            seq_length=args.seq_length
+        )
+        transformer.train('transformer_data.npz', epochs=args.epochs)
+
+        # Save initial transformer model
+        transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'
+        if not os.path.exists(transformer_trend_model_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(transformer_trend_model_path)}")
+            raise FileNotFoundError(f"Transformer model not generated at {transformer_trend_model_path}")
+        registry.save_enhanced_model(transformer_trend_model_path, 'transformer')
+
+        # 4. SHAP feature optimization
+        logger.info("🎯 Phase 4/6: Running SHAP optimization...")
         optimizer = EnhancedSHAPOptimizer(
             background_data=combined_data,
             background_samples=args.shap_samples
@@ -188,26 +202,27 @@ def main():
         registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
         logger.info(f"✅ Selected features: {feature_metadata['selected_features']}")
 
-        # 4. Train Transformer Trend Analyzer with optimized features
-        logger.info("🧠 Phase 4/5: Training Transformer trend model...")
-        transformer = TransformerTrendAnalyzer(
+        # 5. Retrain Transformer with optimized features
+        logger.info("🧠 Phase 5/6: Retraining Transformer with optimized features...")
+        optimized_transformer = TransformerTrendAnalyzer(
             seq_length=args.seq_length,
             feature_mask=top_features  # Pass optimized features
         )
-        transformer.train('transformer_data.npz', epochs=args.epochs)
+        optimized_transformer.train('transformer_data.npz', epochs=args.epochs)
 
-        transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'
-        if not os.path.exists(transformer_trend_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(transformer_trend_model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {transformer_trend_model_path}")
-        registry.save_enhanced_model(transformer_trend_model_path, 'transformer')
+        # Save optimized transformer model
+        optimized_transformer_path = 'src/py/ml_core/models/transformer_trend_optimized.h5'
+        if not os.path.exists(optimized_transformer_path):
+            logger.error(f"❌ Model file not found: {os.path.abspath(optimized_transformer_path)}")
+            raise FileNotFoundError(f"Optimized transformer model not generated at {optimized_transformer_path}")
+        registry.save_enhanced_model(optimized_transformer_path, 'transformer_optimized')
 
-        # 5. Train final ensemble
-        logger.info("🚢 Phase 5/5: Training adaptive ensemble...")
+        # 6. Train final ensemble
+        logger.info("🚢 Phase 6/6: Training adaptive ensemble...")
         ensemble_config = {
             'feature_columns': FEATURE_COLUMNS,
             'volatility_model_path': 'src/py/ml_core/models/regime_model.h5',
-            'transformer_model_path': 'src/py/ml_core/models/transformer_trend.h5',
+            'transformer_model_path': optimized_transformer_path,  # Use optimized transformer
             'risk_management': {
                 'max_vol': 0.015,
                 'max_spread': 0.002
