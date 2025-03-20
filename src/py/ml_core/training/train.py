@@ -138,26 +138,17 @@ def main():
             tf.config.experimental.set_memory_growth(gpu, True)
     
     # Initialize data loader with parallel processing
-    data_loader = EnhancedDataLoader(
-        num_workers=4,  # Parallel data loading
-        prefetch_buffer_size=tf.data.AUTOTUNE
-    )
+    data_loader = EnhancedDataLoader()
     
     # Load and preprocess data with tf.data.Dataset
-    train_data = data_loader.create_dataset(
-        args.tickers,
-        split='train',
-        batch_size=args.batch_size,
-        shuffle=True,
-        prefetch=True
+    train_data = data_loader.create_tf_dataset(
+        data_loader.load_ticker_data(args.tickers[0]),
+        window=args.sequence_length
     )
     
-    val_data = data_loader.create_dataset(
-        args.tickers,
-        split='val',
-        batch_size=args.batch_size,
-        shuffle=False,
-        prefetch=True
+    val_data = data_loader.create_tf_dataset(
+        data_loader.load_ticker_data(args.tickers[0]),
+        window=args.sequence_length
     )
     
     # Initialize model with performance optimizations
