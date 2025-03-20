@@ -22,7 +22,9 @@ class EnhancedSHAPOptimizer:
         self.data_loader = EnhancedDataLoader()
         
         # Log feature columns
-        logger.info(f"Available feature columns: {self.data_loader.feature_columns}")
+        self.feature_columns = self.data_loader.feature_columns
+        logger.info(f"Available feature columns: {self.feature_columns}")
+        logger.info(f"Number of features: {len(self.feature_columns)}")
         
         # Get latest regime model from S3
         if model_path is None:
@@ -32,10 +34,6 @@ class EnhancedSHAPOptimizer:
         self.model = self._load_model_from_s3(model_path)
         self.input_name = self.model.layers[0].name
         
-        # # Log model input shape - fixed for newer TF versions
-        # input_shape = self.model.layers[0].output_shape[1:]  # Get shape without batch dimension
-        # logger.info(f"Model input shape: {input_shape}")
-        
         # Use provided background data or load it
         if background_data is not None:
             self.background = self._prepare_background(background_data, background_samples)
@@ -44,6 +42,10 @@ class EnhancedSHAPOptimizer:
             
         logger.info(f"Background data shape: {self.background.shape}")
         logger.info(f"Background data features: {self.background.shape[-1]}")
+        
+        # Validate background data features
+        if self.background.shape[-1] != len(self.feature_columns):
+            raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
@@ -65,6 +67,10 @@ class EnhancedSHAPOptimizer:
             n_timesteps = self.background.shape[1]  # Get timesteps from background
             x = x.reshape(n_samples, n_timesteps, n_features)
             logger.debug(f"Reshaped 2D input to 3D: {x.shape}")
+        
+        # Validate feature count
+        if x.shape[-1] != len(self.feature_columns):
+            raise ValueError(f"Input features ({x.shape[-1]}) don't match expected features ({len(self.feature_columns)})")
         
         # Ensure input matches model's expected shape
         if x.shape[1:] != self.background.shape[1:]:
@@ -220,6 +226,10 @@ class EnhancedSHAPOptimizer:
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         logger.info(f"Data features: {data.shape[-1]}")
         
+        # Validate input data features
+        if data.shape[-1] != len(self.feature_columns):
+            raise ValueError(f"Input data features ({data.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
+        
         # Store original shape
         original_shape = data.shape
         
@@ -240,6 +250,10 @@ class EnhancedSHAPOptimizer:
                 logger.debug(f"Batch features: {batch.shape[-1]}")
                 
                 try:
+                    # Ensure batch has correct number of features
+                    if batch.shape[-1] != len(self.feature_columns):
+                        raise ValueError(f"Batch features ({batch.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
+                    
                     batch_shap = self.explainer.shap_values(
                         batch,
                         nsamples=100,  # Number of samples for background distribution
