@@ -47,13 +47,14 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
-        # Initialize SHAP explainer with KernelExplainer
-        logger.info("Initializing KernelExplainer...")
-        self.explainer = shap.KernelExplainer(
-            model=lambda x: self._predict_3d(x),
-            data=self.background.reshape(-1, self.background.shape[-1])  # Flatten to 2D
+        # Initialize SHAP explainer with DeepExplainer for faster computation
+        logger.info("Initializing DeepExplainer...")
+        self.explainer = shap.DeepExplainer(
+            model=self.model,
+            data=self.background,
+            combine_mult_and_diffref=False  # Faster computation
         )
-        logger.info("KernelExplainer initialized successfully")
+        logger.info("DeepExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
         logger.info(f"Essential features: {self.essential_features}")
@@ -228,15 +229,15 @@ class EnhancedSHAPOptimizer:
         return background
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with dimension validation"""
+        """Compute SHAP values with dimension validation and parallel processing"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         
         # Validate input dimensions
         if len(data.shape) != 3:
             raise ValueError(f"Input data must be 3D, got {len(data.shape)}D")
         
-        # Process in smaller batches with progress tracking
-        batch_size = 16  # Reduced from 32 for memory stability
+        # Process in larger batches for better GPU utilization
+        batch_size = 64  # Increased for better GPU utilization
         shap_values = []
         
         try:
@@ -245,14 +246,10 @@ class EnhancedSHAPOptimizer:
                 batch = data[i:i+batch_size]
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
-                # Reshape batch to 2D for SHAP computation
-                batch_2d = batch.reshape(-1, batch.shape[-1])
-                logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
-                
-                # Compute SHAP values
+                # Compute SHAP values directly on 3D data
                 batch_shap = self.explainer.shap_values(
-                    batch_2d,
-                    nsamples=50,  # Reduced samples for stability
+                    batch,
+                    check_additivity=False,  # Faster computation
                     silent=True
                 )
                 
@@ -260,11 +257,8 @@ class EnhancedSHAPOptimizer:
                 if isinstance(batch_shap, list):
                     batch_shap = batch_shap[0]  # Take first output
                 
-                # Reshape SHAP values back to 3D
-                batch_shap_3d = batch_shap.reshape(batch.shape)
-                logger.debug(f"Batch SHAP shape: {batch_shap_3d.shape}")
-                    
-                shap_values.append(batch_shap_3d)
+                logger.debug(f"Batch SHAP shape: {batch_shap.shape}")
+                shap_values.append(batch_shap)
             
             return np.concatenate(shap_values, axis=0)
         
@@ -302,9 +296,12 @@ class EnhancedSHAPOptimizer:
                 if f not in self.data_loader.feature_columns:
                     raise ValueError(f"Mandatory feature {f} missing!")
             
-            # Compute SHAP values
+            # Compute SHAP values with reduced samples
             logger.info("Computing SHAP values...")
-            shap_vals = self.calculate_shap(data)
+            # Use a subset of data for faster computation
+            sample_size = min(1000, len(data))
+            data_subset = data[:sample_size]
+            shap_vals = self.calculate_shap(data_subset)
             logger.info(f"SHAP values computed, shape: {shap_vals.shape}")
             
             # Calculate feature importance (average across time steps)

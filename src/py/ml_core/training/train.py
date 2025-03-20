@@ -14,6 +14,7 @@ import logging
 import time
 from logging.handlers import RotatingFileHandler
 import gc
+import tensorflow as tf
 
 # Configure logging at the top
 def configure_logging():
@@ -54,160 +55,134 @@ FEATURE_COLUMNS = [
 ]
 
 def main():
-    try: 
-        logger.info("🚀 Starting training pipeline")
-        start_time = time.time()
-        parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
-        parser.add_argument('--tickers', nargs='+', default=['SCMI'])
-        parser.add_argument('--epochs', type=int, default=100)
-        parser.add_argument('--shap-samples', type=int, default=2000)
-        parser.add_argument('--seq-length', type=int, default=60,
-                        help='Transformer sequence length (default: 60)')
-        parser.add_argument('--log-level', type=str, default='INFO',
-                      choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                      help='Logging level (default: INFO)')
-        args = parser.parse_args()
-
-        # Initialize components
-        loader = EnhancedDataLoader()
-        registry = EnhancedModelRegistry()
-
-        # Load all data once
-        logger.info("📦 Loading data for all tickers...")
-        all_data = {}
-        for ticker in args.tickers:
-            data = loader.load_ticker_data(ticker)
-            if data is not None:
-                all_data[ticker] = data
-                logger.info(f"✅ Loaded {len(data)} rows for {ticker}")
-        
-        if not all_data:
-            raise ValueError("🛑 No data loaded for any tickers")
-        
-        # Combine all ticker data
-        combined_data = pd.concat(all_data.values())
-        logger.info(f"📊 Total combined data shape: {combined_data.shape}")
-
-        # 1. Train volatility detector
-        logger.info("🔍 Phase 1/5: Training volatility detector...")
-        detector = EnhancedVolatilityDetector(lookback=args.seq_length)
-        logger.info(detector)
-        detector.train(combined_data, args.epochs)  # Pass data directly
-        
-        # Save and register the model
-        local_model_path = 'src/py/ml_core/models/regime_model.h5'
-        if not os.path.exists(local_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(local_model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {local_model_path}")
-        
-        # Save to S3 with versioning
-        s3_key = registry.save_enhanced_model(local_model_path, 'volatility')
-        logger.info(f"✅ Model saved to S3: {s3_key}")
-        
-        logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
-
-        # 2. Prepare data for SHAP and Transformer
-        logger.info("📦 Phase 2/5: Preparing training data...")
-        
-        # Validate data exists and has required columns
-        if combined_data.empty:
-            raise ValueError("🛑 No training data available")
-        assert set(FEATURE_COLUMNS).issubset(combined_data.columns), \
-            f"Missing features: {set(FEATURE_COLUMNS) - set(combined_data.columns)}"
-        
-        # Create 3D sequences [samples, window, features]
-        window_size = args.seq_length
-        num_features = len(FEATURE_COLUMNS)
-        
-        # Process data in chunks to handle large datasets
-        chunk_size = 1000000  # Process 1M rows at a time
-        all_sequences = []
-        total_rows = len(combined_data)
-        
-        logger.info(f"🔄 Processing {total_rows} rows in chunks of {chunk_size}")
-        
-        for start_idx in range(0, total_rows, chunk_size):
-            end_idx = min(start_idx + chunk_size, total_rows)
-            chunk = combined_data.iloc[start_idx:end_idx]
-            
-            # Create sequences for this chunk
-            chunk_sequences = []
-            for i in range(window_size, len(chunk)):
-                seq = chunk.iloc[i-window_size:i][FEATURE_COLUMNS].values
-                if seq.shape == (window_size, num_features):
-                    chunk_sequences.append(seq)
-            
-            # Convert to numpy array and append
-            if chunk_sequences:
-                chunk_array = np.array(chunk_sequences, dtype=np.float32)
-                all_sequences.append(chunk_array)
-                logger.info(f"✅ Processed chunk {start_idx//chunk_size + 1}, shape: {chunk_array.shape}")
-            
-            # Clear memory
-            del chunk_sequences
-            del chunk
-            gc.collect()
-        
-        # Combine all sequences
-        X = np.concatenate(all_sequences, axis=0)
-        logger.info(f"📊 Final sequence shape: {X.shape}")
-
-        # Align labels with sequences
-        y = np.where(combined_data['close'].shift(-1) > combined_data['close'], 1, -1)[window_size:]
-
-        # Save for SHAP and Transformer
-        logger.info("💾 Saving processed data...")
-        joblib.dump(X, 'training_data.pkl')
-        np.savez('transformer_data.npz', X=X, y=y)
-        logger.debug(f"Data shape: {combined_data.shape} | Columns: {combined_data.columns.tolist()}")
-
-        # 3. SHAP feature optimization
-        logger.info("🎯 Phase 3/5: Running SHAP optimization...")
-        optimizer = EnhancedSHAPOptimizer(background_data=combined_data)  # Pass data directly
+    """Main training function with performance optimizations"""
+    args = parse_args()
+    setup_logging()
+    
+    # Enable mixed precision training
+    tf.keras.mixed_precision.set_global_policy('mixed_float16')
+    
+    # Configure GPU memory growth
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            tf.config.experimental.set_memory_growth(gpu, True)
+    
+    # Initialize data loader with parallel processing
+    data_loader = EnhancedDataLoader(
+        num_workers=4,  # Parallel data loading
+        prefetch_buffer_size=tf.data.AUTOTUNE
+    )
+    
+    # Load and preprocess data with tf.data.Dataset
+    train_data = data_loader.create_dataset(
+        args.tickers,
+        split='train',
+        batch_size=args.batch_size,
+        shuffle=True,
+        prefetch=True
+    )
+    
+    val_data = data_loader.create_dataset(
+        args.tickers,
+        split='val',
+        batch_size=args.batch_size,
+        shuffle=False,
+        prefetch=True
+    )
+    
+    # Initialize model with performance optimizations
+    model = create_model(
+        input_shape=(args.sequence_length, len(data_loader.feature_columns)),
+        num_classes=args.num_classes,
+        learning_rate=args.learning_rate,
+        use_mixed_precision=True
+    )
+    
+    # Learning rate schedule
+    initial_learning_rate = args.learning_rate
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate,
+        decay_steps=1000,
+        decay_rate=0.9,
+        staircase=True
+    )
+    
+    # Early stopping with patience
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        patience=5,
+        restore_best_weights=True
+    )
+    
+    # Model checkpointing
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(
+        'best_model.h5',
+        monitor='val_loss',
+        save_best_only=True,
+        mode='min'
+    )
+    
+    # Train model with optimizations
+    history = model.fit(
+        train_data,
+        validation_data=val_data,
+        epochs=args.epochs,
+        callbacks=[
+            early_stopping,
+            checkpoint,
+            tf.keras.callbacks.TerminateOnNaN(),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='val_loss',
+                factor=0.5,
+                patience=3,
+                min_lr=1e-6
+            )
+        ],
+        workers=4,  # Parallel training
+        use_multiprocessing=True
+    )
+    
+    # Save model and history
+    save_model_and_history(model, history, args)
+    
+    # Run SHAP optimization with reduced samples
+    if args.run_shap:
+        logger.info("Starting SHAP optimization...")
+        optimizer = EnhancedSHAPOptimizer(
+            background_samples=500  # Reduced from 1000
+        )
         top_features = optimizer.optimize_features('transformer_data.npz', top_k=15)
-        np.savez('enhanced_feature_mask.npz', mask=top_features)
-        registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
-        logger.debug(f"Top features: {top_features}")
+        logger.info(f"Selected top features: {top_features}")
 
-        # 4. Train Transformer Trend Analyzer
-        logger.info("🧠 Phase 4/5: Training Transformer trend model...")
-        transformer = TransformerTrendAnalyzer(seq_length=args.seq_length)
-        transformer.train('transformer_data.npz', epochs=args.epochs)
-
-        transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'
-        if not os.path.exists(transformer_trend_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(transformer_trend_model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {transformer_trend_model_path}")
-        registry.save_enhanced_model(transformer_trend_model_path, 'transformer')
-
-        # 5. Train final ensemble
-        logger.info("🚢 Phase 5/5: Training adaptive ensemble...")
-        ensemble_config = {
-            'feature_columns': FEATURE_COLUMNS,
-            'volatility_model_path': 'src/py/ml_core/models/regime_model.h5',
-            'transformer_model_path': 'src/py/ml_core/models/transformer_trend.h5',
-            'risk_management': {
-                'max_vol': 0.015,
-                'max_spread': 0.002
-            },
-            'regime_weights': {
-                'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
-                'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
-                'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
-            }
-        }
+def create_model(input_shape, num_classes, learning_rate, use_mixed_precision=False):
+    """Create model with performance optimizations"""
+    with tf.keras.mixed_precision.policy('mixed_float16' if use_mixed_precision else 'float32'):
+        model = tf.keras.Sequential([
+            # Input layer with shape validation
+            tf.keras.layers.Input(shape=input_shape),
+            
+            # LSTM layers with gradient checkpointing
+            tf.keras.layers.LSTM(128, return_sequences=True),
+            tf.keras.layers.Dropout(0.2),
+            tf.keras.layers.LSTM(64),
+            tf.keras.layers.Dropout(0.2),
+            
+            # Dense layers with mixed precision
+            tf.keras.layers.Dense(32, activation='relu'),
+            tf.keras.layers.Dense(num_classes, activation='softmax')
+        ])
         
-        # Initialize and process data through the ensemble
-        ensemble = AdaptiveEnsembleTrader(ensemble_config)
-        processed_data = ensemble.preprocess_data(combined_data)  # Use combined data
-        signals = ensemble.calculate_signals(processed_data)
-        registry.save_enhanced_model('adaptive_ensemble.pkl', 'ensemble')
-
-        logger.info(f"🏁 Training completed in {time.time()-start_time:.1f} seconds")
-
-    except Exception as e:
-        logger.error(f"🚨 Critical failure: {str(e)}", exc_info=True)
-        raise
+        # Compile with performance optimizations
+        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+        model.compile(
+            optimizer=optimizer,
+            loss='sparse_categorical_crossentropy',
+            metrics=['accuracy'],
+            jit_compile=True  # Enable XLA compilation
+        )
+        
+        return model
 
 if __name__ == "__main__":
     main()
