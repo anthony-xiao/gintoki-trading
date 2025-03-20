@@ -180,7 +180,8 @@ def main():
         logger.info("🎯 Phase 4/6: Running SHAP optimization...")
         optimizer = EnhancedSHAPOptimizer(
             background_data=combined_data,
-            background_samples=args.shap_samples
+            background_samples=args.shap_samples,
+            ticker=args.tickers[0]  # Use the first ticker for SHAP optimization
         )
         
         # Get optimized features

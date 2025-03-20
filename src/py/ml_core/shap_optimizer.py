@@ -18,10 +18,11 @@ logger = logging.getLogger(__name__)
 
 class EnhancedSHAPOptimizer:
     def __init__(self, model_path: Optional[str] = None, background_samples: int = 1000, 
-                 background_data: Optional[pd.DataFrame] = None):
+                 background_data: Optional[pd.DataFrame] = None, ticker: str = 'SMCI'):
         """Initialize SHAP optimizer for day trading"""
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
+        self.ticker = ticker  # Store ticker
         
         # Day trading specific features
         self.feature_columns = self.data_loader.feature_columns
@@ -350,37 +351,6 @@ class EnhancedSHAPOptimizer:
             logger.error(f"Error loading transformer model: {str(e)}")
             raise
 
-    def _prepare_background(self, data: Optional[pd.DataFrame], n_samples: int) -> np.ndarray:
-        """Prepare background data with trading-specific sampling"""
-        try:
-            if data is None:
-                logger.info("No background data provided, loading from production")
-                return self._load_production_background(n_samples)
-            
-            logger.info(f"Preparing background data with {n_samples} samples")
-            sequences = self.data_loader.create_sequences(data)
-            logger.info(f"Created sequences shape: {sequences.shape}")
-            
-            # Sample background data with trading-specific considerations
-            if len(sequences) > n_samples:
-                # Ensure we have enough samples from different market conditions
-                indices = np.random.choice(len(sequences), n_samples, replace=False)
-                background = sequences[indices]
-                
-                # Validate sample quality
-                if not self._validate_background_samples(background):
-                    logger.warning("Background samples validation failed, using production data")
-                    return self._load_production_background(n_samples)
-            else:
-                background = sequences
-                
-            logger.info(f"Final background shape: {background.shape}")
-            return background
-            
-        except Exception as e:
-            logger.error(f"Error preparing background data: {str(e)}")
-            return self._load_production_background(n_samples)
-
     def _validate_background_samples(self, samples: np.ndarray) -> bool:
         """Validate background samples for trading suitability"""
         try:
@@ -398,21 +368,59 @@ class EnhancedSHAPOptimizer:
                 logger.warning(f"Background samples contain low volume: {min_volume}")
                 return False
             
+            # Check for price data validity
+            price_idx = self.feature_columns.index('close')
+            if np.any(samples[:, :, price_idx] <= 0):
+                logger.warning("Background samples contain invalid prices")
+                return False
+            
+            # Check for data completeness
+            if np.any(np.isnan(samples)):
+                logger.warning("Background samples contain NaN values")
+                return False
+            
+            logger.info(f"Background samples validated successfully with shape {samples.shape}")
             return True
             
         except Exception as e:
             logger.error(f"Error validating background samples: {str(e)}")
             return False
 
+    def _prepare_background(self, data: Optional[pd.DataFrame], n_samples: int) -> np.ndarray:
+        """Prepare background data with trading-specific sampling"""
+        try:
+            if data is None:
+                logger.info(f"Loading background data for {self.ticker}")
+                return self._load_production_background(n_samples)
+            
+            logger.info(f"Preparing background data with {n_samples} samples")
+            sequences = self.data_loader.create_sequences(data)
+            logger.info(f"Created sequences shape: {sequences.shape}")
+            
+            # Sample background data with trading-specific considerations
+            if len(sequences) > n_samples:
+                # Ensure we have enough samples from different market conditions
+                indices = np.random.choice(len(sequences), n_samples, replace=False)
+                background = sequences[indices]
+                
+                # Validate sample quality
+                if not self._validate_background_samples(background):
+                    logger.warning(f"Background samples validation failed for {self.ticker}, using production data")
+                    return self._load_production_background(n_samples)
+            else:
+                background = sequences
+                
+            logger.info(f"Final background shape: {background.shape}")
+            return background
+            
+        except Exception as e:
+            logger.error(f"Error preparing background data: {str(e)}")
+            return self._load_production_background(n_samples)
+
     def _load_production_background(self, n_samples: int) -> np.ndarray:
         """Load real market data from S3 with trading-specific filtering"""
         try:
-            logger.info(f"Loading production background data with {n_samples} samples")
-            
-            # Use SMCI as default if no ticker specified
-            if not hasattr(self, 'ticker') or self.ticker is None:
-                logger.warning("No ticker specified, defaulting to SMCI")
-                self.ticker = 'SMCI'
+            logger.info(f"Loading production background data for {self.ticker} with {n_samples} samples")
             
             # Load and process data
             df = self.data_loader.load_ticker_data(self.ticker)
