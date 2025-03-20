@@ -47,14 +47,13 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
-        # Initialize SHAP explainer with DeepExplainer for faster computation
-        logger.info("Initializing DeepExplainer...")
-        self.explainer = shap.DeepExplainer(
-            model=self.model,
-            data=self.background,
-            combine_mult_and_diffref=False  # Faster computation
+        # Initialize SHAP explainer with KernelExplainer
+        logger.info("Initializing KernelExplainer...")
+        self.explainer = shap.KernelExplainer(
+            model=lambda x: self._predict_3d(x),
+            data=self.background
         )
-        logger.info("DeepExplainer initialized successfully")
+        logger.info("KernelExplainer initialized successfully")
         
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
         logger.info(f"Essential features: {self.essential_features}")
@@ -229,15 +228,34 @@ class EnhancedSHAPOptimizer:
         return background
 
     def calculate_shap(self, data: np.ndarray) -> np.ndarray:
-        """Compute SHAP values with dimension validation and parallel processing"""
+        """Compute SHAP values with dimension validation"""
         logger.info(f"Starting SHAP calculation for data shape: {data.shape}")
         
         # Validate input dimensions
         if len(data.shape) != 3:
             raise ValueError(f"Input data must be 3D, got {len(data.shape)}D")
         
-        # Process in larger batches for better GPU utilization
-        batch_size = 64  # Increased for better GPU utilization
+        # Convert background to DataFrame for SHAP compatibility
+        background_df = pd.DataFrame(
+            self.background.reshape(-1, len(self.feature_columns)),
+            columns=self.feature_columns
+        )
+        
+        # Create masker with feature names
+        masker = shap.maskers.Independent(
+            data=background_df,
+            max_samples=1000
+        )
+        
+        # Reinitialize explainer with proper parameters
+        self.explainer = shap.KernelExplainer(
+            model=lambda x: self._predict_3d(x.values.reshape(-1, 60, len(self.feature_columns))),
+            data=masker,
+            feature_names=self.feature_columns
+        )
+        
+        # Process in smaller batches with progress tracking
+        batch_size = 16
         shap_values = []
         
         try:
@@ -246,19 +264,24 @@ class EnhancedSHAPOptimizer:
                 batch = data[i:i+batch_size]
                 logger.debug(f"Processing batch {i//batch_size + 1}, shape: {batch.shape}")
                 
-                # Compute SHAP values directly on 3D data
+                # Convert batch to DataFrame format
+                batch_df = pd.DataFrame(
+                    batch.reshape(-1, len(self.feature_columns)),
+                    columns=self.feature_columns
+                )
+                
+                # Compute SHAP values
                 batch_shap = self.explainer.shap_values(
-                    batch,
-                    check_additivity=False,  # Faster computation
+                    batch_df,
+                    nsamples=50,
                     silent=True
                 )
                 
                 # Handle multi-output format
                 if isinstance(batch_shap, list):
                     batch_shap = batch_shap[0]  # Take first output
-                
-                logger.debug(f"Batch SHAP shape: {batch_shap.shape}")
-                shap_values.append(batch_shap)
+                    
+                shap_values.append(batch_shap.reshape(batch.shape))
             
             return np.concatenate(shap_values, axis=0)
         
@@ -296,12 +319,9 @@ class EnhancedSHAPOptimizer:
                 if f not in self.data_loader.feature_columns:
                     raise ValueError(f"Mandatory feature {f} missing!")
             
-            # Compute SHAP values with reduced samples
+            # Compute SHAP values
             logger.info("Computing SHAP values...")
-            # Use a subset of data for faster computation
-            sample_size = min(1000, len(data))
-            data_subset = data[:sample_size]
-            shap_vals = self.calculate_shap(data_subset)
+            shap_vals = self.calculate_shap(data)
             logger.info(f"SHAP values computed, shape: {shap_vals.shape}")
             
             # Calculate feature importance (average across time steps)

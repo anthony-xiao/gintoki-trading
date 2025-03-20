@@ -141,10 +141,6 @@ class EnhancedDataLoader:
                     continue
                 keys.append(key)
         
-        if not keys:
-            logger.error(f"No data files found in s3://{self.bucket}/{prefix}")
-            return pd.DataFrame()  # Return empty DataFrame instead of raising error
-        
         # Parallel processing function with validation
         def process_key(key):
             try:
