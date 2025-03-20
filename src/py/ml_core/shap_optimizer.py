@@ -119,11 +119,15 @@ class EnhancedSHAPOptimizer:
             data = self._load_input_data(input_data)
             logger.info(f"Loaded data shape: {data.shape}")
             
+            # Calculate required max_evals based on feature count
+            required_evals = 2 * len(self.feature_columns) + 1
+            logger.info(f"Using max_evals={required_evals} for {len(self.feature_columns)} features")
+            
             # Compute SHAP values for both models
             logger.info("Computing regime SHAP values...")
-            regime_shap = self.regime_explainer.shap_values(data)
+            regime_shap = self.regime_explainer.shap_values(data, max_evals=required_evals)
             logger.info("Computing trend SHAP values...")
-            trend_shap = self.trend_explainer.shap_values(data)
+            trend_shap = self.trend_explainer.shap_values(data, max_evals=required_evals)
             
             # Combine SHAP values with trading-specific weights
             importance = self._combine_shap_values(regime_shap, trend_shap)
@@ -399,6 +403,7 @@ class EnhancedSHAPOptimizer:
                 return self._load_production_background(n_samples)
             
             logger.info(f"Preparing background data with {n_samples} samples")
+            # Use the existing data loader instance
             sequences = self.data_loader.create_sequences(data)
             logger.info(f"Created sequences shape: {sequences.shape}")
             
@@ -427,7 +432,7 @@ class EnhancedSHAPOptimizer:
         try:
             logger.info(f"Loading production background data for {self.ticker} with {n_samples} samples")
             
-            # Load and process data
+            # Use the existing data loader instance
             df = self.data_loader.load_ticker_data(self.ticker)
             if df is None or df.empty:
                 raise ValueError(f"No data available for {self.ticker}")
@@ -435,7 +440,7 @@ class EnhancedSHAPOptimizer:
             # Filter for trading hours and sufficient liquidity
             df = self._filter_trading_data(df)
             
-            # Create sequences
+            # Create sequences using the existing data loader
             sequences = self.data_loader.create_sequences(df)
             logger.info(f"Created sequences shape: {sequences.shape}")
             
