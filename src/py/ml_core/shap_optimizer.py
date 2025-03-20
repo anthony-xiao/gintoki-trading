@@ -16,7 +16,7 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 class EnhancedSHAPOptimizer:
-    def __init__(self, model_path=None, background_samples=1000, background_data=None):
+    def __init__(self, model_path=None, background_samples=500, background_data=None):
         """Initialize SHAP optimizer with latest S3 model"""
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
@@ -245,8 +245,8 @@ class EnhancedSHAPOptimizer:
             data=background_2d
         )
         
-        # Process in smaller batches with progress tracking
-        batch_size = 16
+        # Increased batch size for faster processing
+        batch_size = 32  # Increased from 16
         shap_values = []
         
         try:
@@ -259,10 +259,10 @@ class EnhancedSHAPOptimizer:
                 batch_2d = batch.reshape(-1, len(self.feature_columns))
                 logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
                 
-                # Compute SHAP values
+                # Compute SHAP values with reduced nsamples
                 batch_shap = self.explainer.shap_values(
                     batch_2d,
-                    nsamples=50,
+                    nsamples=30,  # Reduced from 50
                     silent=True
                 )
                 
