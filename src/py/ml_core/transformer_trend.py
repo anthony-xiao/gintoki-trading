@@ -10,13 +10,15 @@ class TransformerTrendAnalyzer:
         self.seq_length = seq_length
         self.d_model = d_model
         self.feature_mask = feature_mask
-        self.model = self._build_model(num_heads)
-        self.data_loader = EnhancedDataLoader()
+        self.data_loader = EnhancedDataLoader()  # Initialize data_loader first
         
         # Log feature selection
         if feature_mask is not None:
             selected_features = [self.data_loader.feature_columns[i] for i in feature_mask]
             logging.info(f"Using optimized features: {selected_features}")
+        
+        # Build model after data_loader is initialized
+        self.model = self._build_model(num_heads)
         
     def _build_model(self, num_heads):
         """Build transformer model with optional feature masking"""
