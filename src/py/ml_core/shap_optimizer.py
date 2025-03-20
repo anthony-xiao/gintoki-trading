@@ -16,7 +16,7 @@ import tempfile
 logger = logging.getLogger(__name__)
 
 class EnhancedSHAPOptimizer:
-    def __init__(self, model_path=None, background_samples=500, background_data=None):
+    def __init__(self, model_path=None, background_samples=1000, background_data=None):
         """Initialize SHAP optimizer with latest S3 model"""
         self.registry = EnhancedModelRegistry()
         self.data_loader = EnhancedDataLoader()
@@ -39,7 +39,7 @@ class EnhancedSHAPOptimizer:
             self.background = self._prepare_background(background_data, background_samples)
         else:
             self.background = self._load_production_background(background_samples)
-            
+
         logger.info(f"Background data shape: {self.background.shape}")
         logger.info(f"Background data features: {self.background.shape[-1]}")
         
@@ -51,7 +51,7 @@ class EnhancedSHAPOptimizer:
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
             model=lambda x: self._predict_3d(x),
-            data=self.background
+            data=self.background.reshape(-1, len(self.feature_columns))
         )
         logger.info("KernelExplainer initialized successfully")
         
@@ -65,7 +65,7 @@ class EnhancedSHAPOptimizer:
             n_samples = x.shape[0]
             n_features = x.shape[1]
             n_timesteps = self.background.shape[1]  # Get timesteps from background
-            x = x.reshape(n_samples, n_timesteps, n_features)
+            x = x.reshape(n_samples // n_timesteps, n_timesteps, n_features)
             logger.debug(f"Reshaped 2D input to 3D: {x.shape}")
         
         # Validate feature count
@@ -235,18 +235,8 @@ class EnhancedSHAPOptimizer:
         if len(data.shape) != 3:
             raise ValueError(f"Input data must be 3D, got {len(data.shape)}D")
         
-        # Reshape background data for SHAP
-        background_2d = self.background.reshape(-1, len(self.feature_columns))
-        logger.info(f"Reshaped background data shape: {background_2d.shape}")
-        
-        # Initialize explainer with background data
-        self.explainer = shap.KernelExplainer(
-            model=lambda x: self._predict_3d(x),
-            data=background_2d
-        )
-        
-        # Increased batch size for faster processing
-        batch_size = 32  # Increased from 16
+        # Process in smaller batches with progress tracking
+        batch_size = 16
         shap_values = []
         
         try:
@@ -259,10 +249,10 @@ class EnhancedSHAPOptimizer:
                 batch_2d = batch.reshape(-1, len(self.feature_columns))
                 logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
                 
-                # Compute SHAP values with reduced nsamples
+                # Compute SHAP values
                 batch_shap = self.explainer.shap_values(
                     batch_2d,
-                    nsamples=30,  # Reduced from 50
+                    nsamples=50,
                     silent=True
                 )
                 
