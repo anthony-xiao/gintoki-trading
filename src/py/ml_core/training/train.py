@@ -14,6 +14,7 @@ import logging
 import time
 from logging.handlers import RotatingFileHandler
 import gc
+from typing import Dict
 
 # Configure logging at the top
 def configure_logging():
@@ -163,15 +164,36 @@ def main():
 
         # 3. SHAP feature optimization
         logger.info("🎯 Phase 3/5: Running SHAP optimization...")
-        optimizer = EnhancedSHAPOptimizer(background_data=combined_data)  # Pass data directly
+        optimizer = EnhancedSHAPOptimizer(
+            background_data=combined_data,
+            background_samples=args.shap_samples
+        )
+        
+        # Get optimized features
         top_features = optimizer.optimize_features('transformer_data.npz', top_k=15)
-        np.savez('enhanced_feature_mask.npz', mask=top_features)
+        
+        # Save feature mask and metadata
+        feature_metadata = {
+            'selected_features': [FEATURE_COLUMNS[i] for i in top_features],
+            'essential_features': optimizer.essential_features,
+            'feature_weights': optimizer._trading_feature_weights().tolist(),
+            'timestamp': time.strftime('%Y%m%d_%H%M%S')
+        }
+        
+        np.savez('enhanced_feature_mask.npz', 
+                 mask=top_features,
+                 metadata=feature_metadata)
+        
+        # Save to S3 with versioning
         registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
-        logger.debug(f"Top features: {top_features}")
+        logger.info(f"✅ Selected features: {feature_metadata['selected_features']}")
 
-        # 4. Train Transformer Trend Analyzer
+        # 4. Train Transformer Trend Analyzer with optimized features
         logger.info("🧠 Phase 4/5: Training Transformer trend model...")
-        transformer = TransformerTrendAnalyzer(seq_length=args.seq_length)
+        transformer = TransformerTrendAnalyzer(
+            seq_length=args.seq_length,
+            feature_mask=top_features  # Pass optimized features
+        )
         transformer.train('transformer_data.npz', epochs=args.epochs)
 
         transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'

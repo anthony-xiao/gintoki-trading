@@ -17,7 +17,7 @@ import tensorflow as tf
 load_dotenv()
 
 class EnhancedDataLoader:
-    def __init__(self, bucket: str = 'quant-trader-data-gintoki'):
+    def __init__(self, bucket: str = 'quant-trader-data-gintoki', feature_mask=None):
         logger = logging.getLogger("training")
         logger.debug("\U0001F310 Initializing S3 client for bucket %s", bucket)
         self.s3 = boto3.client(
@@ -27,10 +27,25 @@ class EnhancedDataLoader:
             region_name=os.getenv('AWS_REGION', 'us-west-2')
         )
         self.bucket = bucket
-        self.feature_columns = [
+        
+        # Define all possible features
+        self.all_feature_columns = [
             'open', 'high', 'low', 'close', 'volume', 'vwap',
-            'days_since_dividend', 'split_ratio', 'bid_ask_spread', 'mid_price'
+            'bid_ask_spread', 'days_since_dividend', 'split_ratio',
+            'rsi', 'macd', 'macd_signal', 'macd_hist',
+            'bb_upper', 'bb_middle', 'bb_lower',
+            'atr', 'obv', 'adx', 'di_plus', 'di_minus'
         ]
+        
+        # Set feature columns based on mask
+        self.feature_mask = feature_mask
+        if feature_mask is not None:
+            self.feature_columns = [self.all_feature_columns[i] for i in feature_mask]
+            logger.info(f"Using optimized features: {self.feature_columns}")
+        else:
+            self.feature_columns = self.all_feature_columns
+            logger.info("Using all available features")
+        
         self.corporate_actions = self._load_corporate_actions()
     
     def _load_corporate_actions(self) -> Dict[str, pd.DataFrame]:
@@ -70,7 +85,7 @@ class EnhancedDataLoader:
 
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
-        """Load and enhance data for a single ticker"""
+        """Load and enhance data for a single ticker with feature masking"""
         # Normalize ticker and path to lowercase
         ticker = ticker.strip().upper()
         agg_path = f'historical/{ticker}/aggregates/minute/'
@@ -113,13 +128,24 @@ class EnhancedDataLoader:
         logger.info(f" - NaNs: {merged.isna().sum().sum()}")
         logger.info(f" - Date range: {merged.index.min()} to {merged.index.max()}")
 
-            # Create default spread columns if missing
+        # Create default spread columns if missing
         if 'bid_ask_spread' not in merged:
             merged['bid_ask_spread'] = 0.001  # Default spread
             merged['mid_price'] = merged['close']
             logger.warning(f"Using default spreads for {ticker}")
-        # return pd.merge(ohlcv, quotes, left_index=True, right_index=True, how='left')
-        return merged[[col for col in self.feature_columns if col in merged.columns]]
+
+        # Apply feature mask if available
+        if self.feature_mask is not None:
+            available_features = [col for col in self.feature_columns if col in merged.columns]
+            missing_features = set(self.feature_columns) - set(available_features)
+            if missing_features:
+                logger.warning(f"Missing features for {ticker}: {missing_features}")
+                for feature in missing_features:
+                    merged[feature] = 0.0  # Default value for missing features
+            
+            return merged[self.feature_columns]
+        else:
+            return merged[[col for col in self.all_feature_columns if col in merged.columns]]
 
     def _load_s3_data(self, prefix: str) -> pd.DataFrame:
         """Parallel S3 loading with validation and memory management"""
@@ -211,7 +237,7 @@ class EnhancedDataLoader:
         return final_df 
     
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
-        """Create validated sequences with strict shape enforcement"""
+        """Create validated sequences with strict shape enforcement and feature masking"""
         ds = tf.data.Dataset.from_generator(
             lambda: self._sequence_generator(data, window),
             output_signature=tf.TensorSpec(
@@ -222,78 +248,20 @@ class EnhancedDataLoader:
         return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
     
     def _sequence_generator(self, data, window):
-        """Yield only valid sequences"""
-        # Validate input data exists
+        """Yield only valid sequences with feature masking"""
         if data is None or len(data) == 0:
             raise ValueError("Input data cannot be None or empty for sequence generation")
         
-        # Get feature count once
         num_features = len(self.feature_columns)
         
         for i in range(window, len(data)):
-            # Use 'data' instead of potential 'df' typo
             seq = data.iloc[i-window:i][self.feature_columns].values
             
-            # Add debug logging
             if seq.shape != (window, num_features):
                 logging.debug(f"Skipping invalid sequence at index {i} with shape {seq.shape}")
                 continue
                 
             yield seq
-
-
-    # def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
-        # """Merge corporate actions data with safety checks and fallbacks"""
-        # logger = logging.getLogger("training")
-        # if df.empty:
-        #     logger.warning(f"Empty DataFrame received for {ticker} - skipping corporate actions")
-        #     return df
-
-        # try:
-        #     # Initialize default values first
-        #     df = df.copy()
-        #     df['days_since_dividend'] = 3650
-        #     df['split_ratio'] = 1.0
-
-        #     # Load corporate actions if available
-        #     ca = self.corporate_actions.get(ticker.upper(), pd.DataFrame())
-        #     if ca.empty:
-        #         logger.debug(f"No corporate actions found for {ticker}")
-        #         return df
-
-        #     # Validate corporate actions schema
-        #     required_ca_cols = {'ex_date', 'type', 'payment_date'}
-        #     if not required_ca_cols.issubset(ca.columns):
-        #         missing = required_ca_cols - set(ca.columns)
-        #         logger.error(f"Missing corporate action columns {missing} for {ticker}")
-        #         return df
-
-        #     # Process dividends
-        #     if 'dividend' in ca['type'].values:
-        #         try:
-        #             dividends = ca[ca['type'] == 'dividend'].sort_values('ex_date')
-        #             last_div_date = dividends['ex_date'].max()
-        #             df['days_since_dividend'] = (df.index - last_div_date).days.clip(upper=3650)
-        #             logger.debug(f"Set dividend dates for {ticker}")
-        #         except Exception as e:
-        #             logger.error(f"Dividend processing failed: {str(e)}")
-
-        #     # Process splits
-        #     if 'split' in ca['type'].values:
-        #         try:
-        #             splits = ca[ca['type'] == 'split'].sort_values('ex_date')
-        #             if not splits.empty:
-        #                 last_split = splits.iloc[-1]
-        #                 df['split_ratio'] = last_split['ratio'] if 'ratio' in splits.columns else 1.0
-        #                 logger.debug(f"Applied split ratio {df['split_ratio'].iloc[0]} for {ticker}")
-        #         except Exception as e:
-        #             logger.error(f"Split processing failed: {str(e)}")
-
-        #     return df
-
-        # except Exception as e:
-        #     logger.error(f"Corporate action merge failed: {str(e)}")
-        #     return df  # Return original DF with default values
 
     def _merge_corporate_actions(self, df: pd.DataFrame, ticker: str) -> pd.DataFrame:
         """Merge corporate actions data with safety checks and fallbacks"""
@@ -408,11 +376,27 @@ class EnhancedDataLoader:
             return pd.DataFrame()  # Return empty to continue pipeline
 
     def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
-        """Create strictly uniform sequences"""
+        """Create strictly uniform sequences with feature masking"""
         sequences = []
         for i in range(window, len(data)):
+            # Use feature_columns which may be masked
             seq = data.iloc[i-window:i][self.feature_columns].values
-            if seq.shape != (window, len(self.feature_columns)):  # New validation
+            if seq.shape != (window, len(self.feature_columns)):
                 continue  # Skip invalid sequences
             sequences.append(seq)
         return np.array(sequences, dtype=np.float32)  # Explicit dtype
+
+    def load_model_metadata(self, model_path: str) -> Dict:
+        """Load feature metadata from saved model"""
+        try:
+            metadata_path = f"{model_path}.metadata.npz"
+            if os.path.exists(metadata_path):
+                metadata = np.load(metadata_path, allow_pickle=True)
+                self.feature_mask = metadata['feature_mask'].tolist()
+                self.feature_columns = metadata['selected_features'].tolist()
+                logging.info(f"Loaded feature metadata: {self.feature_columns}")
+                return dict(metadata)
+            return None
+        except Exception as e:
+            logging.error(f"Error loading model metadata: {str(e)}")
+            return None

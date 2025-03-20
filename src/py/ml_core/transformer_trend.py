@@ -6,14 +6,27 @@ import logging
 import os
 
 class TransformerTrendAnalyzer:
-    def __init__(self, seq_length=60, d_model=64, num_heads=8):
+    def __init__(self, seq_length=60, d_model=64, num_heads=8, feature_mask=None):
         self.seq_length = seq_length
         self.d_model = d_model
+        self.feature_mask = feature_mask
         self.model = self._build_model(num_heads)
         self.data_loader = EnhancedDataLoader()
         
+        # Log feature selection
+        if feature_mask is not None:
+            selected_features = [self.data_loader.feature_columns[i] for i in feature_mask]
+            logging.info(f"Using optimized features: {selected_features}")
+        
     def _build_model(self, num_heads):
-        inputs = tf.keras.Input(shape=(self.seq_length, len(self.data_loader.feature_columns)))
+        """Build transformer model with optional feature masking"""
+        # Determine input shape based on feature mask
+        if self.feature_mask is not None:
+            input_shape = (self.seq_length, len(self.feature_mask))
+        else:
+            input_shape = (self.seq_length, len(self.data_loader.feature_columns))
+            
+        inputs = tf.keras.Input(shape=input_shape)
         
         # Transformer Encoder
         x = tf.keras.layers.Dense(self.d_model)(inputs)
@@ -29,9 +42,14 @@ class TransformerTrendAnalyzer:
         return tf.keras.Model(inputs=inputs, outputs=outputs)
     
     def train(self, data_path, epochs=50, batch_size=1024):
-        """Train on preprocessed sequences"""
+        """Train on preprocessed sequences with feature masking"""
         data = np.load(data_path)
         X, y = data['X'], data['y']
+        
+        # Apply feature mask if available
+        if self.feature_mask is not None:
+            X = X[:, :, self.feature_mask]
+            logging.info(f"Applied feature mask, new shape: {X.shape}")
         
         # Convert labels to trend direction [-1, 1]
         y = np.where(y > 0, 1, -1).astype(np.float32)
@@ -54,12 +72,27 @@ class TransformerTrendAnalyzer:
                 )
             ]
         )
-        logging.info("\U0001F389 Volatility training completed")
-        # Save final weights
-        model_path = 'src/py/ml_core/models/transformer_trend.h5'  # Save in current directory
+        logging.info("\U0001F389 Transformer training completed")
+        
+        # Save final weights with feature metadata
+        model_path = 'src/py/ml_core/models/transformer_trend.h5'
         self.model.save(model_path)
+        
+        # Save feature metadata
+        if self.feature_mask is not None:
+            metadata = {
+                'feature_mask': self.feature_mask.tolist(),
+                'selected_features': [self.data_loader.feature_columns[i] for i in self.feature_mask],
+                'seq_length': self.seq_length,
+                'd_model': self.d_model,
+                'num_heads': num_heads
+            }
+            np.savez(f"{model_path}.metadata.npz", **metadata)
+        
         logging.info(f"Model saved to {os.path.abspath(model_path)}")
 
     def predict_trend_strength(self, sequences):
-        """Predict normalized trend strength (-1 to 1)"""
+        """Predict normalized trend strength (-1 to 1) with feature masking"""
+        if self.feature_mask is not None:
+            sequences = sequences[:, :, self.feature_mask]
         return self.model.predict(sequences, verbose=0)
