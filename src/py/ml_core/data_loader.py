@@ -28,14 +28,21 @@ class EnhancedDataLoader:
         )
         self.bucket = bucket
         
-        # Define all possible features
-        self.all_feature_columns = [
+        # Define base features (from raw data)
+        self.base_feature_columns = [
             'open', 'high', 'low', 'close', 'volume', 'vwap',
-            'bid_ask_spread', 'days_since_dividend', 'split_ratio',
+            'bid_ask_spread', 'days_since_dividend', 'split_ratio'
+        ]
+        
+        # Define technical indicators
+        self.technical_indicators = [
             'rsi', 'macd', 'macd_signal', 'macd_hist',
             'bb_upper', 'bb_middle', 'bb_lower',
             'atr', 'obv', 'adx', 'di_plus', 'di_minus'
         ]
+        
+        # Combine all possible features
+        self.all_feature_columns = self.base_feature_columns + self.technical_indicators
         
         # Set feature columns based on mask
         self.feature_mask = feature_mask
@@ -43,8 +50,8 @@ class EnhancedDataLoader:
             self.feature_columns = [self.all_feature_columns[i] for i in feature_mask]
             logger.info(f"Using optimized features: {self.feature_columns}")
         else:
-            self.feature_columns = self.all_feature_columns
-            logger.info("Using all available features")
+            self.feature_columns = self.base_feature_columns  # Start with base features only
+            logger.info("Using base features only")
         
         self.corporate_actions = self._load_corporate_actions()
     
@@ -83,6 +90,69 @@ class EnhancedDataLoader:
         all_actions = pd.concat(actions)
         return {ticker: group for ticker, group in all_actions.groupby('symbol')}
 
+    def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate technical indicators for the dataset"""
+        try:
+            # Calculate RSI
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            df['rsi'] = 100 - (100 / (1 + rs))
+            
+            # Calculate MACD
+            exp1 = df['close'].ewm(span=12, adjust=False).mean()
+            exp2 = df['close'].ewm(span=26, adjust=False).mean()
+            df['macd'] = exp1 - exp2
+            df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+            df['macd_hist'] = df['macd'] - df['macd_signal']
+            
+            # Calculate Bollinger Bands
+            df['bb_middle'] = df['close'].rolling(window=20).mean()
+            bb_std = df['close'].rolling(window=20).std()
+            df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
+            df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+            
+            # Calculate ATR
+            high_low = df['high'] - df['low']
+            high_close = np.abs(df['high'] - df['close'].shift())
+            low_close = np.abs(df['low'] - df['close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = np.max(ranges, axis=1)
+            df['atr'] = true_range.rolling(14).mean()
+            
+            # Calculate OBV
+            df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+            
+            # Calculate ADX
+            high_low = df['high'] - df['low']
+            high_close = np.abs(df['high'] - df['close'].shift())
+            low_close = np.abs(df['low'] - df['close'].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            true_range = np.max(ranges, axis=1)
+            atr = true_range.rolling(14).mean()
+            
+            plus_dm = df['high'].diff()
+            minus_dm = df['low'].diff()
+            plus_dm[plus_dm < 0] = 0
+            minus_dm[minus_dm > 0] = 0
+            
+            tr14 = atr
+            plus_di14 = 100 * (plus_dm.rolling(14).mean() / tr14)
+            minus_di14 = 100 * (minus_dm.rolling(14).mean() / tr14)
+            
+            df['di_plus'] = plus_di14
+            df['di_minus'] = minus_di14
+            
+            # Calculate ADX
+            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14)
+            df['adx'] = dx.rolling(14).mean()
+            
+            return df.fillna(method='ffill').fillna(method='bfill')
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators: {str(e)}")
+            return df
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
         """Load and enhance data for a single ticker with feature masking"""
@@ -121,6 +191,10 @@ class EnhancedDataLoader:
             how='outer',
             sort=True
         ).ffill().dropna()  # Forward fill and remove remaining NaNs
+
+        # Calculate technical indicators
+        logger.debug("📊 Calculating technical indicators...")
+        merged = self._calculate_technical_indicators(merged)
 
         # After merging in load_ticker_data()
         logger.info(f"📊 Post-merge stats for {ticker}:")
