@@ -49,15 +49,21 @@ class EnhancedSHAPOptimizer:
         
         # Initialize SHAP explainers for each component
         background_data = self._prepare_background(background_data, background_samples)
+        
+        # Create masker for feature permutation
+        masker = shap.maskers.Independent(data=background_data)
+        
         self.regime_explainer = shap.PermutationExplainer(
             model=self._predict_regime,
             data=background_data,
+            masker=masker,
             max_evals=100
         )
         
         self.trend_explainer = shap.PermutationExplainer(
             model=self._predict_trend,
             data=background_data,
+            masker=masker,
             max_evals=100
         )
         
