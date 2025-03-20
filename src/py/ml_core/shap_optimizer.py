@@ -47,8 +47,13 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
-        # Prepare background data for SHAP using k-means clustering
-        background_2d = self.background.reshape(-1, len(self.feature_columns))
+        # Prepare background data for SHAP
+        n_samples = self.background.shape[0]
+        n_timesteps = self.background.shape[1]
+        n_features = self.background.shape[2]
+        
+        # Reshape to 2D for SHAP (samples * timesteps, features)
+        background_2d = self.background.reshape(n_samples * n_timesteps, n_features)
         logger.info(f"Reshaped background data shape: {background_2d.shape}")
         
         # Use k-means to summarize background data
@@ -226,9 +231,9 @@ class EnhancedSHAPOptimizer:
         
         # Sample background data
         if len(sequences) > n_samples:
-            # Use SHAP's sampling function for better distribution
-            background = shap.sample(sequences.reshape(-1, sequences.shape[-1]), n_samples)
-            background = background.reshape(-1, sequences.shape[1], sequences.shape[2])
+            # Randomly sample complete sequences
+            indices = np.random.choice(len(sequences), n_samples, replace=False)
+            background = sequences[indices]
         else:
             background = sequences
             
