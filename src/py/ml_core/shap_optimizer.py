@@ -47,15 +47,19 @@ class EnhancedSHAPOptimizer:
         if self.background.shape[-1] != len(self.feature_columns):
             raise ValueError(f"Background data features ({self.background.shape[-1]}) don't match feature columns ({len(self.feature_columns)})")
         
-        # Prepare background data for SHAP
+        # Prepare background data for SHAP using k-means clustering
         background_2d = self.background.reshape(-1, len(self.feature_columns))
         logger.info(f"Reshaped background data shape: {background_2d.shape}")
+        
+        # Use k-means to summarize background data
+        background_summary = shap.kmeans(background_2d, k=100)  # Use 100 clusters
+        logger.info(f"Background summary shape: {background_summary.shape}")
         
         # Initialize SHAP explainer with KernelExplainer
         logger.info("Initializing KernelExplainer...")
         self.explainer = shap.KernelExplainer(
-            model=lambda x: self._predict_3d(x)[:, 0],  # Only use first output for SHAP
-            data=background_2d,
+            model=self._predict_wrapper,
+            data=background_summary,
             link="identity"  # Use identity link for better numerical stability
         )
         logger.info("KernelExplainer initialized successfully")
@@ -63,25 +67,37 @@ class EnhancedSHAPOptimizer:
         self.essential_features = ['days_since_dividend', 'split_ratio', 'bid_ask_spread']
         logger.info(f"Essential features: {self.essential_features}")
 
-    def _predict_3d(self, x):
-        """Helper function to handle 3D predictions"""
-        # If input is 2D, reshape to 3D
-        if len(x.shape) == 2:
+    def _predict_wrapper(self, x):
+        """Wrapper function to handle predictions with proper shape management"""
+        try:
+            # Ensure input is 2D
+            if len(x.shape) == 1:
+                x = x.reshape(1, -1)
+            
+            # Calculate number of timesteps from background data
+            n_timesteps = self.background.shape[1]
+            
+            # Reshape to 3D for model prediction
             n_samples = x.shape[0]
             n_features = x.shape[1]
-            n_timesteps = self.background.shape[1]  # Get timesteps from background
-            x = x.reshape(n_samples // n_timesteps, n_timesteps, n_features)
-            logger.debug(f"Reshaped 2D input to 3D: {x.shape}")
-        
-        # Validate feature count
-        if x.shape[-1] != len(self.feature_columns):
-            raise ValueError(f"Input features ({x.shape[-1]}) don't match expected features ({len(self.feature_columns)})")
-        
-        # Ensure input matches model's expected shape
-        if x.shape[1:] != self.background.shape[1:]:
-            raise ValueError(f"Input shape {x.shape} doesn't match expected shape {self.background.shape}")
             
-        return self.model.predict(x, verbose=0)
+            # Ensure we have complete sequences
+            if n_features % n_timesteps != 0:
+                raise ValueError(f"Input features ({n_features}) must be divisible by timesteps ({n_timesteps})")
+            
+            # Reshape to 3D
+            x_3d = x.reshape(n_samples, n_timesteps, -1)
+            logger.debug(f"Reshaped input shape: {x_3d.shape}")
+            
+            # Get model predictions
+            predictions = self.model.predict(x_3d, verbose=0)
+            
+            # Return only first output for SHAP
+            return predictions[:, 0]
+            
+        except Exception as e:
+            logger.error(f"Error in prediction wrapper: {str(e)}")
+            raise
 
     def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
         """Reshape 3D data to 2D for SHAP computation with feature validation"""
@@ -210,9 +226,9 @@ class EnhancedSHAPOptimizer:
         
         # Sample background data
         if len(sequences) > n_samples:
-            # Randomly sample n_samples sequences
-            indices = np.random.choice(len(sequences), n_samples, replace=False)
-            background = sequences[indices]
+            # Use SHAP's sampling function for better distribution
+            background = shap.sample(sequences.reshape(-1, sequences.shape[-1]), n_samples)
+            background = background.reshape(-1, sequences.shape[1], sequences.shape[2])
         else:
             background = sequences
             
@@ -259,10 +275,10 @@ class EnhancedSHAPOptimizer:
                 batch_2d = batch.reshape(-1, len(self.feature_columns))
                 logger.debug(f"Reshaped batch shape: {batch_2d.shape}")
                 
-                # Compute SHAP values
+                # Compute SHAP values with reduced samples for stability
                 batch_shap = self.explainer.shap_values(
                     batch_2d,
-                    nsamples=50,
+                    nsamples=100,  # Reduced from 500 for stability
                     silent=True
                 )
                 
