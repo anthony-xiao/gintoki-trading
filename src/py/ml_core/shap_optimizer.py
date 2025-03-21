@@ -119,25 +119,38 @@ class EnhancedSHAPOptimizer:
             data = self._load_input_data(input_data)
             logger.info(f"Loaded data shape: {data.shape}")
             
-            # Calculate required evaluations based on TOTAL features (timesteps × features)
-            timesteps = data.shape[1]
-            features_per_timestep = data.shape[2]
-            total_features = timesteps * features_per_timestep
+            # Calculate total number of features across all timesteps
+            total_features = data.shape[1] * data.shape[2]  # timesteps * features
             required_evals = 2 * total_features + 1
-            
-            logger.info(f"Total features (timesteps × features): {timesteps}×{features_per_timestep} = {total_features}")
+            logger.info(f"Total features across timesteps: {total_features}")
             logger.info(f"Required evaluations: {required_evals}")
             
-            # Calculate permutations needed (round up to ensure sufficient evaluations)
-            npermutations = int(np.ceil(required_evals / timesteps))
-            logger.info(f"Using {npermutations} permutations per timestep")
-            logger.info(f"Total evaluations will be {npermutations * timesteps}")
-
-            # Compute SHAP values with updated permutation count
+            # Calculate npermutations to ensure we have enough evaluations
+            # We need npermutations * data.shape[1] >= required_evals
+            npermutations = int(np.ceil(required_evals / data.shape[1]))
+            logger.info(f"Number of timesteps: {data.shape[1]}")
+            logger.info(f"Using {npermutations} permutations per feature")
+            logger.info(f"Total evaluations will be {npermutations * data.shape[1]}")
+            
+            # Reshape data for SHAP computation
+            n_samples, n_timesteps, n_features = data.shape
+            reshaped_data = data.reshape(n_samples, n_timesteps * n_features)
+            logger.info(f"Reshaped data for SHAP: {reshaped_data.shape}")
+            
+            # Compute SHAP values for both models
             logger.info("Computing regime SHAP values...")
-            regime_shap = self.regime_explainer.shap_values(data, npermutations=npermutations)
+            regime_shap = self.regime_explainer.shap_values(reshaped_data, npermutations=npermutations)
             logger.info("Computing trend SHAP values...")
-            trend_shap = self.trend_explainer.shap_values(data, npermutations=npermutations)
+            trend_shap = self.trend_explainer.shap_values(reshaped_data, npermutations=npermutations)
+            
+            # Reshape SHAP values back to original dimensions
+            if isinstance(regime_shap, list):
+                regime_shap = regime_shap[0]
+            if isinstance(trend_shap, list):
+                trend_shap = trend_shap[0]
+            
+            regime_shap = regime_shap.reshape(n_samples, n_timesteps, n_features)
+            trend_shap = trend_shap.reshape(n_samples, n_timesteps, n_features)
             
             # Combine SHAP values with trading-specific weights
             importance = self._combine_shap_values(regime_shap, trend_shap)
