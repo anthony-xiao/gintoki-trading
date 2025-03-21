@@ -134,24 +134,39 @@ class EnhancedSHAPOptimizer:
             logger.info(f"Using {npermutations} permutations per feature")
             logger.info(f"Total evaluations will be {npermutations * n_timesteps}")
             
-            # Reshape data for SHAP computation
-            reshaped_data = data.reshape(n_samples, n_timesteps * n_features)
-            logger.info(f"Reshaped data for SHAP: {reshaped_data.shape}")
+            # Process data in batches to handle large datasets
+            batch_size = 100  # Process 100 samples at a time
+            all_regime_shap = []
+            all_trend_shap = []
             
-            # Compute SHAP values for both models
-            logger.info("Computing regime SHAP values...")
-            regime_shap = self.regime_explainer.shap_values(reshaped_data, npermutations=npermutations)
-            logger.info("Computing trend SHAP values...")
-            trend_shap = self.trend_explainer.shap_values(reshaped_data, npermutations=npermutations)
+            for i in range(0, n_samples, batch_size):
+                batch_end = min(i + batch_size, n_samples)
+                batch_data = data[i:batch_end]
+                
+                # Reshape batch data for SHAP computation
+                batch_reshaped = batch_data.reshape(batch_end - i, n_timesteps * n_features)
+                logger.info(f"Processing batch {i//batch_size + 1}, shape: {batch_reshaped.shape}")
+                
+                # Compute SHAP values for the batch
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=npermutations)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=npermutations)
+                
+                # Handle list outputs from SHAP
+                if isinstance(regime_shap, list):
+                    regime_shap = regime_shap[0]
+                if isinstance(trend_shap, list):
+                    trend_shap = trend_shap[0]
+                
+                # Reshape SHAP values back to original dimensions
+                regime_shap = regime_shap.reshape(batch_end - i, n_timesteps, n_features)
+                trend_shap = trend_shap.reshape(batch_end - i, n_timesteps, n_features)
+                
+                all_regime_shap.append(regime_shap)
+                all_trend_shap.append(trend_shap)
             
-            # Reshape SHAP values back to original dimensions
-            if isinstance(regime_shap, list):
-                regime_shap = regime_shap[0]
-            if isinstance(trend_shap, list):
-                trend_shap = trend_shap[0]
-            
-            regime_shap = regime_shap.reshape(n_samples, n_timesteps, n_features)
-            trend_shap = trend_shap.reshape(n_samples, n_timesteps, n_features)
+            # Combine all batches
+            regime_shap = np.concatenate(all_regime_shap, axis=0)
+            trend_shap = np.concatenate(all_trend_shap, axis=0)
             
             # Combine SHAP values with trading-specific weights
             importance = self._combine_shap_values(regime_shap, trend_shap)
