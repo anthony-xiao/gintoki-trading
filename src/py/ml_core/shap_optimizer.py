@@ -121,10 +121,12 @@ class EnhancedSHAPOptimizer:
             
             # Calculate required number of permutations based on feature count
             required_evals = 2 * len(self.feature_columns) + 1
-            # We need to ensure that npermutations * data.shape[1] >= required_evals
-            # Therefore, npermutations = ceil(required_evals / data.shape[1])
-            npermutations = int(np.ceil(required_evals / data.shape[1]))
             logger.info(f"Required evaluations: {required_evals}")
+            logger.info(f"Number of features: {len(self.feature_columns)}")
+            
+            # Calculate npermutations to ensure we have enough evaluations
+            # We need npermutations * data.shape[1] >= required_evals
+            npermutations = int(np.ceil(required_evals / data.shape[1]))
             logger.info(f"Number of timesteps: {data.shape[1]}")
             logger.info(f"Using {npermutations} permutations per feature")
             logger.info(f"Total evaluations will be {npermutations * data.shape[1]}")
