@@ -81,11 +81,20 @@ class EnhancedSHAPOptimizer:
     def _predict_regime(self, x: np.ndarray) -> np.ndarray:
         """Predict market regime with proper shape handling"""
         try:
-            # Ensure input is 3D
+            # Get the number of features
+            n_features = len(self.feature_columns)
+            
+            # Calculate the number of timesteps
+            n_timesteps = 60  # Model expects 60 timesteps
+            
+            # Reshape input to match model's expected shape
             if len(x.shape) == 2:
-                x = x.reshape(1, -1, len(self.feature_columns))
+                # If input is (batch_size, n_timesteps * n_features)
+                n_samples = x.shape[0]
+                x = x.reshape(n_samples, n_timesteps, n_features)
             elif len(x.shape) == 1:
-                x = x.reshape(1, 1, -1)
+                # If input is (n_timesteps * n_features,)
+                x = x.reshape(1, n_timesteps, n_features)
             
             # Get model predictions
             predictions = self.regime_model.predict(x, verbose=0)
@@ -98,11 +107,20 @@ class EnhancedSHAPOptimizer:
     def _predict_trend(self, x: np.ndarray) -> np.ndarray:
         """Predict trend direction with proper shape handling"""
         try:
-            # Ensure input is 3D
+            # Get the number of features
+            n_features = len(self.feature_columns)
+            
+            # Calculate the number of timesteps
+            n_timesteps = 60  # Model expects 60 timesteps
+            
+            # Reshape input to match model's expected shape
             if len(x.shape) == 2:
-                x = x.reshape(1, -1, len(self.feature_columns))
+                # If input is (batch_size, n_timesteps * n_features)
+                n_samples = x.shape[0]
+                x = x.reshape(n_samples, n_timesteps, n_features)
             elif len(x.shape) == 1:
-                x = x.reshape(1, 1, -1)
+                # If input is (n_timesteps * n_features,)
+                x = x.reshape(1, n_timesteps, n_features)
             
             # Get model predictions
             predictions = self.transformer_model.predict(x, verbose=0)
