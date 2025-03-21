@@ -53,22 +53,24 @@ class EnhancedSHAPOptimizer:
         background_data = self._prepare_background(background_data, background_samples)
         
         # Create masker for feature permutation
-        masker = shap.maskers.Independent(data=background_data)
+        # Reshape background data to match expected shape (samples, timesteps, features)
+        n_samples, n_timesteps, n_features = background_data.shape
+        masker = shap.maskers.Independent(data=background_data.reshape(n_samples, n_timesteps * n_features))
         
         # Calculate required max_evals based on feature count
-        required_evals = 2 * len(self.feature_columns) + 1
-        logger.info(f"Setting max_evals to {required_evals} for {len(self.feature_columns)} features")
+        required_evals = 2 * (n_timesteps * n_features) + 1
+        logger.info(f"Setting max_evals to {required_evals} for {n_timesteps * n_features} total features")
         
         self.regime_explainer = shap.PermutationExplainer(
             model=self._predict_regime,
-            data=background_data,
+            data=background_data.reshape(n_samples, n_timesteps * n_features),
             masker=masker,
             max_evals=required_evals
         )
         
         self.trend_explainer = shap.PermutationExplainer(
             model=self._predict_trend,
-            data=background_data,
+            data=background_data.reshape(n_samples, n_timesteps * n_features),
             masker=masker,
             max_evals=required_evals
         )
@@ -120,20 +122,19 @@ class EnhancedSHAPOptimizer:
             logger.info(f"Loaded data shape: {data.shape}")
             
             # Calculate total number of features across all timesteps
-            total_features = data.shape[1] * data.shape[2]  # timesteps * features
+            n_samples, n_timesteps, n_features = data.shape
+            total_features = n_timesteps * n_features
             required_evals = 2 * total_features + 1
             logger.info(f"Total features across timesteps: {total_features}")
             logger.info(f"Required evaluations: {required_evals}")
             
             # Calculate npermutations to ensure we have enough evaluations
-            # We need npermutations * data.shape[1] >= required_evals
-            npermutations = int(np.ceil(required_evals / data.shape[1]))
-            logger.info(f"Number of timesteps: {data.shape[1]}")
+            npermutations = int(np.ceil(required_evals / n_timesteps))
+            logger.info(f"Number of timesteps: {n_timesteps}")
             logger.info(f"Using {npermutations} permutations per feature")
-            logger.info(f"Total evaluations will be {npermutations * data.shape[1]}")
+            logger.info(f"Total evaluations will be {npermutations * n_timesteps}")
             
             # Reshape data for SHAP computation
-            n_samples, n_timesteps, n_features = data.shape
             reshaped_data = data.reshape(n_samples, n_timesteps * n_features)
             logger.info(f"Reshaped data for SHAP: {reshaped_data.shape}")
             
