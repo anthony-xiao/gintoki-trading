@@ -10,11 +10,14 @@ from src.py.ml_core.ensemble_strategy import AdaptiveEnsembleTrader
 from src.py.ml_core.shap_optimizer import EnhancedSHAPOptimizer
 from src.py.ml_core.transformer_trend import TransformerTrendAnalyzer
 from src.py.ml_core.model_registry import EnhancedModelRegistry
+from src.py.ml_core.model_factory import ModelFactory
 import logging
 import time
 from logging.handlers import RotatingFileHandler
 import gc
 from typing import Dict
+import json
+from io import BytesIO
 
 # Configure logging at the top
 def configure_logging():
@@ -67,11 +70,32 @@ def main():
         parser.add_argument('--log-level', type=str, default='INFO',
                       choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                       help='Logging level (default: INFO)')
+        parser.add_argument('--model-version', type=str, default=None,
+                      help='Version tag for model storage (e.g., v1.0.0)')
         args = parser.parse_args()
 
         # Initialize components
         loader = EnhancedDataLoader()
         registry = EnhancedModelRegistry()
+        
+        # Initialize ModelFactory with training config
+        model_config = {
+            'seq_length': args.seq_length,
+            'd_model': 64,
+            'num_heads': 8,
+            's3_bucket': 'quant-trader-data-gintoki',
+            'model_prefix': 'models/',
+            'risk_management': {
+                'max_vol': 0.015,
+                'max_spread': 0.002
+            },
+            'regime_weights': {
+                'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
+                'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
+                'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
+            }
+        }
+        model_factory = ModelFactory(model_config)
 
         # Load all data once
         logger.info("📦 Loading data for all tickers...")
@@ -89,23 +113,15 @@ def main():
         combined_data = pd.concat(all_data.values())
         logger.info(f"📊 Total combined data shape: {combined_data.shape}")
 
-        # 1. Train volatility detector
+        # 1. Train volatility detector using ModelFactory
         logger.info("🔍 Phase 1/6: Training volatility detector...")
-        detector = EnhancedVolatilityDetector(lookback=args.seq_length)
-        logger.info(detector)
-        detector.train(combined_data, args.epochs)  # Pass data directly
+        model_factory.create_models()  # Create model instances
+        volatility_model = model_factory.models['volatility']
+        volatility_model.train(combined_data, args.epochs)
         
-        # Save and register the model
-        local_model_path = 'src/py/ml_core/models/regime_model.h5'
-        if not os.path.exists(local_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(local_model_path)}")
-            raise FileNotFoundError(f"Volatility model not generated at {local_model_path}")
-        
-        # Save to S3 with versioning
-        s3_key = registry.save_enhanced_model(local_model_path, 'volatility')
-        logger.info(f"✅ Model saved to S3: {s3_key}")
-        
-        logger.info(f"✅ Volatility detector trained ({time.time()-start_time:.1f}s)")
+        # Save volatility model to S3
+        model_factory.save_model_to_s3(volatility_model.model, 'volatility', args.model_version)
+        logger.info("✅ Volatility model saved to S3")
 
         # 2. Prepare data for Transformer and SHAP
         logger.info("📦 Phase 2/6: Preparing training data...")
@@ -162,19 +178,14 @@ def main():
         np.savez('transformer_data.npz', X=X, y=y)
         logger.debug(f"Data shape: {combined_data.shape} | Columns: {combined_data.columns.tolist()}")
 
-        # 3. Train initial Transformer Trend Analyzer
+        # 3. Train initial Transformer using ModelFactory
         logger.info("🧠 Phase 3/6: Training initial Transformer trend model...")
-        transformer = TransformerTrendAnalyzer(
-            seq_length=args.seq_length
-        )
-        transformer.train('transformer_data.npz', epochs=args.epochs)
+        transformer_model = model_factory.models['transformer']
+        transformer_model.train('transformer_data.npz', epochs=args.epochs)
 
-        # Save initial transformer model
-        transformer_trend_model_path = 'src/py/ml_core/models/transformer_trend.h5'
-        if not os.path.exists(transformer_trend_model_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(transformer_trend_model_path)}")
-            raise FileNotFoundError(f"Transformer model not generated at {transformer_trend_model_path}")
-        registry.save_enhanced_model(transformer_trend_model_path, 'transformer')
+        # Save initial transformer model to S3
+        model_factory.save_model_to_s3(transformer_model.model, 'transformer', args.model_version)
+        logger.info("✅ Initial transformer model saved to S3")
 
         # 4. SHAP feature optimization
         logger.info("🎯 Phase 4/6: Running SHAP optimization...")
@@ -204,44 +215,57 @@ def main():
         registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
         logger.info(f"✅ Selected features: {feature_metadata['selected_features']}")
 
-        # 5. Retrain Transformer with optimized features
+        # 5. Retrain Transformer with optimized features using ModelFactory
         logger.info("🧠 Phase 5/6: Retraining Transformer with optimized features...")
-        optimized_transformer = TransformerTrendAnalyzer(
-            seq_length=args.seq_length,
-            feature_mask=top_features  # Pass optimized features
-        )
+        optimized_transformer = model_factory.models['transformer']
         optimized_transformer.train('transformer_data.npz', epochs=args.epochs)
 
-        # Save optimized transformer model
-        optimized_transformer_path = 'src/py/ml_core/models/transformer_trend_optimized.h5'
-        if not os.path.exists(optimized_transformer_path):
-            logger.error(f"❌ Model file not found: {os.path.abspath(optimized_transformer_path)}")
-            raise FileNotFoundError(f"Optimized transformer model not generated at {optimized_transformer_path}")
-        registry.save_enhanced_model(optimized_transformer_path, 'transformer_optimized')
+        # Save optimized transformer model to S3
+        model_factory.save_model_to_s3(optimized_transformer.model, 'transformer_optimized', args.model_version)
+        logger.info("✅ Optimized transformer model saved to S3")
 
-        # 6. Train final ensemble
+        # 6. Train final ensemble using ModelFactory
         logger.info("🚢 Phase 6/6: Training adaptive ensemble...")
-        ensemble_config = {
-            'feature_columns': FEATURE_COLUMNS,
-            'volatility_model_path': 'src/py/ml_core/models/regime_model.h5',
-            'transformer_model_path': optimized_transformer_path,  # Use optimized transformer
-            'risk_management': {
-                'max_vol': 0.015,
-                'max_spread': 0.002
-            },
-            'regime_weights': {
-                'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
-                'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
-                'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
-            }
+        ensemble = model_factory.ensemble
+        processed_data = ensemble.preprocess_data(combined_data)
+        signals = ensemble.calculate_signals(processed_data)
+        
+        # Save all models and ensemble configuration to S3
+        model_paths = model_factory.save_models(args.model_version)
+        
+        # Log all saved model paths
+        logger.info("📝 Saved model paths:")
+        for model_name, s3_path in model_paths.items():
+            logger.info(f"  - {model_name}: s3://{model_factory.bucket}/{s3_path}")
+            
+        # Save model paths to a metadata file for future reference
+        metadata = {
+            'model_paths': model_paths,
+            'version': args.model_version,
+            'timestamp': time.strftime('%Y%m%d_%H%M%S'),
+            'config': model_config
         }
         
-        # Initialize and process data through the ensemble
-        ensemble = AdaptiveEnsembleTrader(ensemble_config)
-        processed_data = ensemble.preprocess_data(combined_data)  # Use combined data
-        signals = ensemble.calculate_signals(processed_data)
-        registry.save_enhanced_model('adaptive_ensemble.pkl', 'ensemble')
+        # Save metadata to S3
+        metadata_buffer = BytesIO()
+        metadata_buffer.write(json.dumps(metadata, indent=2).encode())
+        metadata_buffer.seek(0)
+        
+        timestamp = time.strftime('%Y%m%d_%H%M%S')
+        if args.model_version:
+            metadata_key = f"{model_factory.model_prefix}metadata/models/{args.model_version}_{timestamp}.json"
+        else:
+            metadata_key = f"{model_factory.model_prefix}metadata/models/{timestamp}.json"
+            
+        model_factory.s3_client.upload_fileobj(
+            metadata_buffer,
+            model_factory.bucket,
+            metadata_key,
+            ExtraArgs={'ContentType': 'application/json'}
+        )
+        logger.info(f"✅ Training metadata saved to s3://{model_factory.bucket}/{metadata_key}")
 
+        logger.info("✅ All models and ensemble configuration saved to S3")
         logger.info(f"🏁 Training completed in {time.time()-start_time:.1f} seconds")
 
     except Exception as e:

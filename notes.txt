@@ -84,10 +84,11 @@ graph TD
     A[Polygon.io Real-time Data] -->|Done| B(Node.js Data Ingestor)
     B -->|Done| C{AWS S3 Historical Storage}
     C --> D1(LSTM Volatility Regime Detector)
-    D1 --> D2(SHAP Feature Optimizer)
-    D2 --> D3(Transformer Trend Analyzer)  <!-- NEW -->
-    D3 --> D4(Adaptive Ensemble Engine)    <!-- MODIFIED -->
-    D4 --> F[LSTM+Transformer Model Factory]
+    D1 --> D2(Transformer Trend Analyzer)
+    D2 --> D3(SHAP Feature Optimizer)
+    D3 --> D4(Re-train Transformer Trend Analyzer with optimized features)
+    D4 --> D5(Adaptive Ensemble Engine)   
+    D5 --> F[LSTM+Transformer Model Factory]
     F --> G[Alpaca Execution Engine]
     G --> H[Performance Monitor]
     H --> D1  <!-- Feedback loop -->
