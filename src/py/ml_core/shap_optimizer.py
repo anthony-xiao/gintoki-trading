@@ -20,7 +20,8 @@ class EnhancedSHAPOptimizer:
     def __init__(self, model_path: Optional[str] = None, background_samples: int = 1000, 
                  background_data: Optional[pd.DataFrame] = None, ticker: str = 'SMCI',
                  data_loader: Optional[EnhancedDataLoader] = None,
-                 trained_model: Optional[tf.keras.Model] = None):
+                 trained_volatility_model: Optional[tf.keras.Model] = None,
+                 trained_transformer_model: Optional[tf.keras.Model] = None):
         """Initialize SHAP optimizer for day trading"""
         self.registry = EnhancedModelRegistry()
         self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
@@ -41,10 +42,10 @@ class EnhancedSHAPOptimizer:
         self.max_impact_threshold = 0.02      # Maximum price impact
         self.volume_weight = 1.5              # Weight for volume features
         
-        # Load or use provided model
-        if trained_model is not None:
-            logger.info("Using provided trained model for SHAP optimization")
-            self.regime_model = trained_model
+        # Load or use provided models
+        if trained_volatility_model is not None:
+            logger.info("Using provided trained volatility model for SHAP optimization")
+            self.regime_model = trained_volatility_model
         elif model_path is None:
             logger.info("No model path provided, fetching latest regime model from S3")
             model_path = self._get_latest_regime_model()
@@ -52,8 +53,13 @@ class EnhancedSHAPOptimizer:
             self.regime_model = self._load_model_from_s3(model_path)
         else:
             self.regime_model = self._load_model_from_s3(model_path)
-        
-        self.transformer_model = self._load_transformer_model()
+            
+        if trained_transformer_model is not None:
+            logger.info("Using provided trained transformer model for SHAP optimization")
+            self.transformer_model = trained_transformer_model
+        else:
+            logger.info("No transformer model provided, attempting to load from S3")
+            self.transformer_model = self._load_transformer_model()
         
         # Initialize SHAP explainers for each component
         background_data = self._prepare_background(background_data, background_samples)

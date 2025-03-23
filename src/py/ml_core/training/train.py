@@ -190,7 +190,8 @@ def main():
             background_samples=args.shap_samples,
             ticker=args.tickers[0],  # Use the first ticker for SHAP optimization
             data_loader=loader,  # Pass the existing data loader instance
-            trained_model=volatility_model.model  # Pass the model we just trained
+            trained_volatility_model=volatility_model.model,  # Pass the volatility model we just trained
+            trained_transformer_model=transformer_model.model  # Pass the transformer model we just trained
         )
         
         # Get optimized features
