@@ -79,7 +79,7 @@ class EnhancedSHAPOptimizer:
         logger.info(f"Essential features: {self.essential_features}")
 
     def _predict_regime(self, x: np.ndarray) -> np.ndarray:
-        """Predict market regime with proper shape handling"""
+        """Predict market regime with proper shape handling and GPU acceleration"""
         try:
             # Get the number of features
             n_features = len(self.feature_columns)
@@ -96,8 +96,11 @@ class EnhancedSHAPOptimizer:
                 # If input is (n_timesteps * n_features,)
                 x = x.reshape(1, n_timesteps, n_features)
             
-            # Get model predictions
-            predictions = self.regime_model.predict(x, verbose=0)
+            # Convert to tensorflow tensor and ensure GPU usage
+            x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
+            
+            # Get model predictions with GPU acceleration
+            predictions = self.regime_model.predict(x_tensor, verbose=0)
             return predictions[:, 0]  # Return first output for SHAP
             
         except Exception as e:
@@ -105,7 +108,7 @@ class EnhancedSHAPOptimizer:
             raise
 
     def _predict_trend(self, x: np.ndarray) -> np.ndarray:
-        """Predict trend direction with proper shape handling"""
+        """Predict trend direction with proper shape handling and GPU acceleration"""
         try:
             # Get the number of features
             n_features = len(self.feature_columns)
@@ -122,8 +125,11 @@ class EnhancedSHAPOptimizer:
                 # If input is (n_timesteps * n_features,)
                 x = x.reshape(1, n_timesteps, n_features)
             
-            # Get model predictions
-            predictions = self.transformer_model.predict(x, verbose=0)
+            # Convert to tensorflow tensor and ensure GPU usage
+            x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
+            
+            # Get model predictions with GPU acceleration
+            predictions = self.transformer_model.predict(x_tensor, verbose=0)
             return predictions.flatten()  # Return flattened predictions
             
         except Exception as e:

@@ -185,12 +185,10 @@ class ModelFactory:
                 num_heads=self.config.get('num_heads', 8)
             )
             
-            # 3. Create Adaptive Ensemble
+            # 3. Create Adaptive Ensemble with minimal config
             logger.info("Creating Adaptive Ensemble...")
             ensemble_config = {
                 'feature_columns': self.data_loader.feature_columns,
-                'volatility_model_path': self.config.get('volatility_model_path'),
-                'transformer_model_path': self.config.get('transformer_model_path'),
                 'risk_management': self.config.get('risk_management', {
                     'max_vol': 0.015,
                     'max_spread': 0.002
@@ -202,7 +200,15 @@ class ModelFactory:
                 })
             }
             
-            self.ensemble = AdaptiveEnsembleTrader(ensemble_config)
+            # Initialize ensemble without models
+            self.ensemble = AdaptiveEnsembleTrader(ensemble_config, skip_model_loading=True)
+            
+            # Set the models after creation
+            if hasattr(self.ensemble, 'set_models'):
+                self.ensemble.set_models({
+                    'lstm_volatility': self.models['volatility'].model,
+                    'transformer_trend': self.models['transformer'].model
+                })
             
             logger.info("✅ All models created successfully")
             return self.models

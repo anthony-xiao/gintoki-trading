@@ -95,3 +95,10 @@ graph TD
 
 
 Took out 'bid_ask_spread' as a required column in data loader. may need to add it back Use Corwin-Schultz estimator from OHLC when quotes are missing:
+
+graph TD
+    A[train.py] -->|1. Train Models| B[Save Models to Disk]
+    B -->|2. Save Model Paths| C[model_factory.py]
+    C -->|3. Load Models| D[TradingEngine]
+    D -->|4. Use Models| E[Generate Signals]
+    E -->|5. Execute Trades| F[Update Weights]

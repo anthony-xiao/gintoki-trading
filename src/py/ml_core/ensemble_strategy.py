@@ -6,15 +6,13 @@ from typing import Dict
 from xgboost import XGBClassifier
 from sklearn.ensemble import IsolationForest
 from tensorflow.keras.models import load_model
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AdaptiveEnsembleTrader:
-    def __init__(self, config: Dict):
-        self.models = {
-            'lstm_volatility': load_model(config['volatility_model_path']),
-            'xgb_momentum': XGBClassifier(),
-            'transformer_trend': load_model(config['transformer_model_path']),
-            'isolation_forest': IsolationForest(contamination=0.05)
-        }
+    def __init__(self, config: Dict, skip_model_loading: bool = False):
+        """Initialize the ensemble trader with optional model loading"""
         self.feature_columns = config['feature_columns']
         self.regime_weights = config.get('regime_weights', {
             'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
@@ -23,6 +21,37 @@ class AdaptiveEnsembleTrader:
         })
         self.risk_params = config['risk_management']
         self.seq_length = 60  # Matches transformer window size
+        
+        # Initialize models dictionary
+        self.models = {}
+        
+        # Load models if not skipping
+        if not skip_model_loading:
+            if 'volatility_model_path' in config and 'transformer_model_path' in config:
+                self.models = {
+                    'lstm_volatility': load_model(config['volatility_model_path']),
+                    'xgb_momentum': XGBClassifier(),
+                    'transformer_trend': load_model(config['transformer_model_path']),
+                    'isolation_forest': IsolationForest(contamination=0.05)
+                }
+            else:
+                raise ValueError("Model paths required when not skipping model loading")
+        else:
+            # Initialize with empty models
+            self.models = {
+                'lstm_volatility': None,
+                'xgb_momentum': XGBClassifier(),
+                'transformer_trend': None,
+                'isolation_forest': IsolationForest(contamination=0.05)
+            }
+
+    def set_models(self, models: Dict[str, tf.keras.Model]) -> None:
+        """Set models after initialization"""
+        for name, model in models.items():
+            if name in self.models:
+                self.models[name] = model
+            else:
+                raise ValueError(f"Unknown model name: {name}")
 
     def preprocess_data(self, raw_data: pd.DataFrame) -> pd.DataFrame:
         """Enhance data with derived features (unchanged from original)"""
@@ -37,45 +66,64 @@ class AdaptiveEnsembleTrader:
 
     def calculate_signals(self, processed_data: pd.DataFrame) -> Dict:
         """Generate signals with transformer integration"""
-        latest_data = processed_data.iloc[-self.seq_length:]
-        
-        # Get market regime
-        regime_probs = self.models['lstm_volatility'].predict(
-            self._create_sequences(latest_data[self.feature_columns])
-        )
-        current_regime = self._detect_regime(regime_probs[-1])
-        
-        # Get component signals
-        xgb_signal = self._xgb_momentum_signal(latest_data)
-        lstm_signal = self._lstm_volatility_signal(latest_data)
-        transformer_signal = self._transformer_trend_signal(latest_data)
-        
-        # Combine signals with regime-based weights
-        weights = self.regime_weights[current_regime]
-        combined = (
-            weights['transformer'] * transformer_signal +
-            weights['xgb'] * xgb_signal +
-            weights['lstm'] * lstm_signal
-        )
-        
-        # Apply risk adjustments
-        risk_factor = self._calculate_risk_factor(latest_data)
-        final_signal = combined * risk_factor
-        
-        # Anomaly detection
-        if self._detect_anomalies(latest_data):
-            final_signal *= 0.5
+        try:
+            latest_data = processed_data.iloc[-self.seq_length:]
+            
+            # Initialize default signals
+            regime_probs = np.array([0.33, 0.33, 0.34])  # Default to neutral regime
+            xgb_signal = 0.0
+            lstm_signal = 0.0
+            transformer_signal = 0.0
+            
+            # Get market regime if model exists
+            if self.models['lstm_volatility'] is not None:
+                regime_probs = self.models['lstm_volatility'].predict(
+                    self._create_sequences(latest_data[self.feature_columns])
+                )
+            
+            current_regime = self._detect_regime(regime_probs[-1])
+            
+            # Get component signals if models exist
+            if self.models['xgb_momentum'] is not None:
+                xgb_signal = self._xgb_momentum_signal(latest_data)
+            
+            if self.models['lstm_volatility'] is not None:
+                lstm_signal = self._lstm_volatility_signal(latest_data)
+            
+            if self.models['transformer_trend'] is not None:
+                transformer_signal = self._transformer_trend_signal(latest_data)
+            
+            # Combine signals with regime-based weights
+            weights = self.regime_weights[current_regime]
+            combined = (
+                weights['transformer'] * transformer_signal +
+                weights['xgb'] * xgb_signal +
+                weights['lstm'] * lstm_signal
+            )
+            
+            # Apply risk adjustments
+            risk_factor = self._calculate_risk_factor(latest_data)
+            final_signal = combined * risk_factor
+            
+            # Anomaly detection if model exists
+            if self.models['isolation_forest'] is not None:
+                if self._detect_anomalies(latest_data):
+                    final_signal *= 0.5
 
-        return {
-            'signal': np.tanh(final_signal),
-            'regime': current_regime,
-            'confidence': abs(final_signal),
-            'components': {
-                'transformer': transformer_signal,
-                'xgb': xgb_signal,
-                'lstm': lstm_signal
+            return {
+                'signal': np.tanh(final_signal),
+                'regime': current_regime,
+                'confidence': abs(final_signal),
+                'components': {
+                    'transformer': transformer_signal,
+                    'xgb': xgb_signal,
+                    'lstm': lstm_signal
+                }
             }
-        }
+            
+        except Exception as e:
+            logger.error(f"Error in calculate_signals: {str(e)}")
+            raise
 
     def _transformer_trend_signal(self, data: pd.DataFrame) -> float:
         """Get transformer-based trend strength"""
