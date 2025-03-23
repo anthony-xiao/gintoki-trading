@@ -11,8 +11,8 @@ from src.py.ml_core.data_loader import EnhancedDataLoader
 class EnhancedVolatilityDetector:
     def __init__(self, lookback: int = 60, data_loader: EnhancedDataLoader = None):
         self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
-        self.model = self._build_model(lookback)
         self.lookback = lookback
+        self.model = self._build_model(lookback)
 
     def _build_model(self, lookback: int) -> tf.keras.Model:
         """Construct LSTM architecture with attention"""
@@ -84,7 +84,7 @@ class EnhancedVolatilityDetector:
             
             # Data Preparation
             logging.debug("🧠 Preparing training data...")
-            X = self.data_loader.create_sequences(data_with_labels)
+            X = self.data_loader.create_sequences(data_with_labels, sequence_length=self.lookback)
             y = data_with_labels['regime'].values[self.lookback:]
             logging.info(f"🎯 Training data shape: {X.shape}, Labels: {y.shape}")
             

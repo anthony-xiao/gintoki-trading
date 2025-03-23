@@ -171,16 +171,19 @@ class ModelFactory:
     def create_models(self) -> Dict:
         """Create and initialize all required models"""
         try:
+            # Get sequence length from config
+            seq_length = self.config.get('seq_length', 30)  # Default to 30 if not specified
+            
             # 1. Create Volatility Detector
-            logger.info("Creating Volatility Detector...")
+            logger.info(f"Creating Volatility Detector with sequence length {seq_length}...")
             self.models['volatility'] = EnhancedVolatilityDetector(
-                lookback=self.config.get('seq_length', 60)
+                lookback=seq_length
             )
             
             # 2. Create Transformer Trend Analyzer
-            logger.info("Creating Transformer Trend Analyzer...")
+            logger.info(f"Creating Transformer Trend Analyzer with sequence length {seq_length}...")
             self.models['transformer'] = TransformerTrendAnalyzer(
-                seq_length=self.config.get('seq_length', 60),
+                seq_length=seq_length,
                 d_model=self.config.get('d_model', 64),
                 num_heads=self.config.get('num_heads', 8)
             )

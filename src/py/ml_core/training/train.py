@@ -58,43 +58,38 @@ FEATURE_COLUMNS = [
 ]
 
 def main():
-    try: 
-        logger.info("🚀 Starting training pipeline")
-        start_time = time.time()
-        parser = argparse.ArgumentParser(description='Enhanced Training Pipeline')
-        parser.add_argument('--tickers', nargs='+', default=['SCMI'])
-        parser.add_argument('--epochs', type=int, default=100)
-        parser.add_argument('--shap-samples', type=int, default=2000)
-        parser.add_argument('--seq-length', type=int, default=60,
-                        help='Transformer sequence length (default: 60)')
-        parser.add_argument('--log-level', type=str, default='INFO',
-                      choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                      help='Logging level (default: INFO)')
-        parser.add_argument('--model-version', type=str, default=None,
-                      help='Version tag for model storage (e.g., v1.0.0)')
+    try:
+        # Parse command line arguments
+        parser = argparse.ArgumentParser(description='Train ML models for trading')
+        parser.add_argument('--tickers', nargs='+', required=True, help='List of tickers to train on')
+        parser.add_argument('--epochs', type=int, default=100, help='Number of epochs to train')
+        parser.add_argument('--shap-samples', type=int, default=1000, help='Number of SHAP samples')
+        parser.add_argument('--seq-length', type=int, default=30, help='Sequence length for models')
+        parser.add_argument('--log-level', default='INFO', help='Logging level')
+        parser.add_argument('--model-version', default=None, help='Version tag for saved models')
         args = parser.parse_args()
 
-        # Initialize components
+        # Set up logging
+        logging.basicConfig(
+            level=getattr(logging, args.log_level),
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        logger = logging.getLogger("training")
+
+        # Initialize data loader
         loader = EnhancedDataLoader()
-        registry = EnhancedModelRegistry()
-        
-        # Initialize ModelFactory with training config
+
+        # Model configuration
         model_config = {
-            'seq_length': args.seq_length,
+            'seq_length': args.seq_length,  # Use command line argument
             'd_model': 64,
             'num_heads': 8,
-            's3_bucket': 'quant-trader-data-gintoki',
-            'model_prefix': 'models/',
             'risk_management': {
                 'max_vol': 0.015,
                 'max_spread': 0.002
-            },
-            'regime_weights': {
-                'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
-                'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
-                'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
             }
         }
+
         model_factory = ModelFactory(model_config)
 
         # Load all data once
@@ -133,7 +128,7 @@ def main():
             f"Missing features: {set(FEATURE_COLUMNS) - set(combined_data.columns)}"
         
         # Create 3D sequences [samples, window, features]
-        window_size = args.seq_length
+        window_size = args.seq_length  # Use command line argument
         num_features = len(FEATURE_COLUMNS)
         
         # Process data in chunks to handle large datasets
@@ -212,6 +207,7 @@ def main():
                  metadata=feature_metadata)
         
         # Save to S3 with versioning
+        registry = EnhancedModelRegistry()
         registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
         logger.info(f"✅ Selected features: {feature_metadata['selected_features']}")
 

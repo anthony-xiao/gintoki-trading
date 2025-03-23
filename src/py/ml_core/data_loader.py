@@ -456,13 +456,13 @@ class EnhancedDataLoader:
             return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size', 
                                       'bid_ask_spread', 'mid_price'])
 
-    def create_sequences(self, data: pd.DataFrame, window: int = 60) -> np.ndarray:
+    def create_sequences(self, data: pd.DataFrame, sequence_length: int = 60) -> np.ndarray:
         """Create strictly uniform sequences with feature masking"""
         sequences = []
-        for i in range(window, len(data)):
+        for i in range(sequence_length, len(data)):
             # Use feature_columns which may be masked
-            seq = data.iloc[i-window:i][self.feature_columns].values
-            if seq.shape != (window, len(self.feature_columns)):
+            seq = data.iloc[i-sequence_length:i][self.feature_columns].values
+            if seq.shape != (sequence_length, len(self.feature_columns)):
                 continue  # Skip invalid sequences
             sequences.append(seq)
         return np.array(sequences, dtype=np.float32)  # Explicit dtype
