@@ -20,6 +20,17 @@ class EnhancedDataLoader:
     def __init__(self, bucket: str = 'quant-trader-data-gintoki', feature_mask=None):
         logger = logging.getLogger("training")
         logger.debug("\U0001F310 Initializing S3 client for bucket %s", bucket)
+        
+        # Configure GPU memory growth
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                logger.info(f"GPU memory growth enabled for {len(gpus)} devices")
+            except RuntimeError as e:
+                logger.error(f"Error configuring GPU: {str(e)}")
+        
         self.s3 = boto3.client(
             's3',
             aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
@@ -322,7 +333,10 @@ class EnhancedDataLoader:
                 dtype=tf.float32
             )
         )
-        return ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+        # Optimize dataset for GPU
+        ds = ds.cache()  # Cache the dataset in memory
+        ds = ds.batch(4096).prefetch(tf.data.AUTOTUNE)
+        return ds
     
     def _sequence_generator(self, data, window):
         """Yield only valid sequences with feature masking"""

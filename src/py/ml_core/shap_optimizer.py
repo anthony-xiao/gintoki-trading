@@ -23,6 +23,16 @@ class EnhancedSHAPOptimizer:
                  trained_volatility_model: Optional[tf.keras.Model] = None,
                  trained_transformer_model: Optional[tf.keras.Model] = None):
         """Initialize SHAP optimizer for day trading"""
+        # Configure GPU memory growth
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                logger.info(f"GPU memory growth enabled for {len(gpus)} devices")
+            except RuntimeError as e:
+                logger.error(f"Error configuring GPU: {str(e)}")
+        
         self.registry = EnhancedModelRegistry()
         self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
         self.ticker = ticker  # Store ticker
@@ -96,8 +106,8 @@ class EnhancedSHAPOptimizer:
             # Get the number of features
             n_features = len(self.feature_columns)
             
-            # Calculate the number of timesteps
-            n_timesteps = 60  # Model expects 60 timesteps
+            # Calculate the number of timesteps from input shape
+            n_timesteps = x.shape[1] // n_features
             
             # Reshape input to match model's expected shape
             if len(x.shape) == 2:
@@ -125,8 +135,8 @@ class EnhancedSHAPOptimizer:
             # Get the number of features
             n_features = len(self.feature_columns)
             
-            # Calculate the number of timesteps
-            n_timesteps = 60  # Model expects 60 timesteps
+            # Calculate the number of timesteps from input shape
+            n_timesteps = x.shape[1] // n_features
             
             # Reshape input to match model's expected shape
             if len(x.shape) == 2:
@@ -160,6 +170,9 @@ class EnhancedSHAPOptimizer:
             logger.info(f"Loaded data shape: {X.shape}")
             logger.info(f"Loaded data features: {X.shape[-1]}")
             
+            # Convert to GPU tensor for faster processing
+            X = tf.convert_to_tensor(X, dtype=tf.float32)
+            
             # Reshape data to match background shape
             n_samples, n_timesteps, n_features = X.shape
             total_features = n_timesteps * n_features
@@ -184,12 +197,12 @@ class EnhancedSHAPOptimizer:
                 batch = X[start_idx:end_idx]
                 
                 # Reshape batch to match background shape
-                batch_reshaped = batch.reshape(batch.shape[0], -1)
+                batch_reshaped = tf.reshape(batch, (batch.shape[0], -1))
                 logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}")
                 
                 # Calculate SHAP values for both models
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped.numpy(), npermutations=21)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped.numpy(), npermutations=21)
                 
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)

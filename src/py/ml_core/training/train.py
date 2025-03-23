@@ -18,6 +18,7 @@ import gc
 from typing import Dict
 import json
 from io import BytesIO
+import tensorflow as tf
 
 # Configure logging at the top
 def configure_logging():
@@ -59,6 +60,19 @@ FEATURE_COLUMNS = [
 
 def main():
     try:
+        # Configure GPU memory growth
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            try:
+                for gpu in gpus:
+                    tf.config.experimental.set_memory_growth(gpu, True)
+                logger.info(f"GPU memory growth enabled for {len(gpus)} devices")
+            except RuntimeError as e:
+                logger.error(f"Error configuring GPU: {str(e)}")
+        
+        # Set mixed precision training for better GPU performance
+        tf.keras.mixed_precision.set_global_policy('mixed_float16')
+        
         # Parse command line arguments
         parser = argparse.ArgumentParser(description='Train ML models for trading')
         parser.add_argument('--tickers', nargs='+', required=True, help='List of tickers to train on')
@@ -167,16 +181,44 @@ def main():
         # Align labels with sequences
         y = np.where(combined_data['close'].shift(-1) > combined_data['close'], 1, -1)[window_size:]
 
+        # Convert sequences to GPU tensors for faster processing
+        X = tf.convert_to_tensor(X, dtype=tf.float32)
+        y = tf.convert_to_tensor(y, dtype=tf.int32)
+        
+        # Create TensorFlow datasets with GPU optimization
+        train_ds = tf.data.Dataset.from_tensor_slices((X, y)) \
+            .cache() \
+            .shuffle(buffer_size=10000) \
+            .batch(4096) \
+            .prefetch(tf.data.AUTOTUNE)
+        
         # Save for Transformer and SHAP
         logger.info("💾 Saving processed data...")
-        joblib.dump(X, 'training_data.pkl')
-        np.savez('transformer_data.npz', X=X, y=y)
+        joblib.dump(X.numpy(), 'training_data.pkl')
+        np.savez('transformer_data.npz', X=X.numpy(), y=y.numpy())
         logger.debug(f"Data shape: {combined_data.shape} | Columns: {combined_data.columns.tolist()}")
 
         # 3. Train initial Transformer using ModelFactory
         logger.info("🧠 Phase 3/6: Training initial Transformer trend model...")
         transformer_model = model_factory.models['transformer']
-        transformer_model.train('transformer_data.npz', epochs=args.epochs)
+        
+        # Use the optimized train_ds for training
+        transformer_model.model.fit(
+            train_ds,
+            epochs=args.epochs,
+            callbacks=[
+                tf.keras.callbacks.ModelCheckpoint(
+                    'transformer_trend.h5',
+                    save_best_only=True,
+                    monitor='val_loss'
+                ),
+                tf.keras.callbacks.EarlyStopping(
+                    patience=5,
+                    restore_best_weights=True
+                )
+            ]
+        )
+        logger.info("✅ Initial transformer model training completed")
 
         # Save initial transformer model to S3
         model_factory.save_model_to_s3(transformer_model.model, 'transformer', args.model_version)
@@ -217,7 +259,24 @@ def main():
         # 5. Retrain Transformer with optimized features using ModelFactory
         logger.info("🧠 Phase 5/6: Retraining Transformer with optimized features...")
         optimized_transformer = model_factory.models['transformer']
-        optimized_transformer.train('transformer_data.npz', epochs=args.epochs)
+        
+        # Use the optimized train_ds for training
+        optimized_transformer.model.fit(
+            train_ds,
+            epochs=args.epochs,
+            callbacks=[
+                tf.keras.callbacks.ModelCheckpoint(
+                    'transformer_trend_optimized.h5',
+                    save_best_only=True,
+                    monitor='val_loss'
+                ),
+                tf.keras.callbacks.EarlyStopping(
+                    patience=5,
+                    restore_best_weights=True
+                )
+            ]
+        )
+        logger.info("✅ Optimized transformer model training completed")
 
         # Save optimized transformer model to S3
         model_factory.save_model_to_s3(optimized_transformer.model, 'transformer_optimized', args.model_version)
