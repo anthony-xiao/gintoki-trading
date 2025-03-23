@@ -48,9 +48,8 @@ def configure_logging():
     logger.addHandler(file_handler)
     return logger
 
+# Initialize logger at module level
 logger = configure_logging()
-
-
 
 # Configure feature columns exactly as requested
 FEATURE_COLUMNS = [
@@ -83,12 +82,8 @@ def main():
         parser.add_argument('--model-version', default=None, help='Version tag for saved models')
         args = parser.parse_args()
 
-        # Set up logging
-        logging.basicConfig(
-            level=getattr(logging, args.log_level),
-            format='%(asctime)s - %(levelname)s - %(message)s'
-        )
-        logger = logging.getLogger("training")
+        # Set up logging level from command line
+        logger.setLevel(getattr(logging, args.log_level))
 
         # Initialize data loader
         loader = EnhancedDataLoader()
