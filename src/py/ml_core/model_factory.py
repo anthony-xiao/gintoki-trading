@@ -38,8 +38,8 @@ class ModelFactory:
         try:
             # Save model to memory
             model_buffer = BytesIO()
-            # In Keras 3, save_weights doesn't need save_format parameter
-            model.save_weights(model_buffer)
+            # Save complete model to buffer
+            model.save(model_buffer, save_format='h5')
             model_buffer.seek(0)
             
             # Generate S3 key with timestamp
@@ -93,20 +93,8 @@ class ModelFactory:
             self.s3_client.download_fileobj(self.bucket, latest_model, model_buffer)
             model_buffer.seek(0)
             
-            # Create a new model instance with the same architecture
-            if model_name == 'volatility':
-                model = EnhancedVolatilityDetector(lookback=self.config.get('seq_length', 30)).model
-            elif model_name == 'transformer':
-                model = TransformerTrendAnalyzer(
-                    seq_length=self.config.get('seq_length', 30),
-                    d_model=self.config.get('d_model', 64),
-                    num_heads=self.config.get('num_heads', 8)
-                ).model
-            else:
-                raise ValueError(f"Unknown model type: {model_name}")
-            
-            # Load weights from buffer
-            model.load_weights(model_buffer)
+            # Load complete model from buffer
+            model = tf.keras.models.load_model(model_buffer)
             logger.info(f"Loaded {model_name} model from s3://{self.bucket}/{latest_model}")
             return model
             
