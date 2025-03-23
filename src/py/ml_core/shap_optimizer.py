@@ -216,9 +216,9 @@ class EnhancedSHAPOptimizer:
                 end_idx = min((i + 1) * batch_size, n_samples)
                 batch = X[start_idx:end_idx]
                 
-                # Reshape batch to match background shape
-                batch_reshaped = batch.reshape(batch.shape[0], -1)
-                logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}")
+                # Reshape batch to match background shape and ensure float32
+                batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
+                logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
                 
                 # Calculate SHAP values for both models
                 regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
