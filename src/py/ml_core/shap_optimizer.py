@@ -127,7 +127,11 @@ class EnhancedSHAPOptimizer:
             x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
             
             # Get model predictions with GPU acceleration
-            predictions = self.regime_model.predict(x_tensor, verbose=0)
+            with tf.device('/GPU:0'):  # Force GPU usage
+                predictions = self.regime_model.predict(x_tensor, verbose=0)
+                # Ensure predictions are on CPU for SHAP
+                predictions = predictions.numpy()
+            
             return predictions[:, 0]  # Return first output for SHAP
             
         except Exception as e:
@@ -156,7 +160,11 @@ class EnhancedSHAPOptimizer:
             x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
             
             # Get model predictions with GPU acceleration
-            predictions = self.transformer_model.predict(x_tensor, verbose=0)
+            with tf.device('/GPU:0'):  # Force GPU usage
+                predictions = self.transformer_model.predict(x_tensor, verbose=0)
+                # Ensure predictions are on CPU for SHAP
+                predictions = predictions.numpy()
+            
             return predictions.flatten()  # Return flattened predictions
             
         except Exception as e:
@@ -175,6 +183,9 @@ class EnhancedSHAPOptimizer:
             logger.info(f"Loaded data shape: {X.shape}")
             logger.info(f"Loaded data features: {X.shape[-1]}")
             
+            # Convert data to float32 for SHAP compatibility
+            X = X.astype(np.float32)
+            
             # Get background shape from the masker
             background_shape = self.regime_explainer.masker.data.shape[1]
             logger.info(f"Background shape: {background_shape}")
@@ -190,10 +201,13 @@ class EnhancedSHAPOptimizer:
                 logger.error(f"Input shape: {X.shape}, Background shape: {self.regime_explainer.masker.data.shape}")
                 raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
-            # Process in batches
+            # Process in batches with GPU optimization
             batch_size = 100
             n_batches = (n_samples + batch_size - 1) // batch_size
             all_shap_values = []
+            
+            # Clear GPU memory before starting
+            tf.keras.backend.clear_session()
             
             for i in range(n_batches):
                 start_idx = i * batch_size
@@ -211,6 +225,9 @@ class EnhancedSHAPOptimizer:
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)
                 all_shap_values.append(combined_shap)
+                
+                # Clear GPU memory after each batch
+                tf.keras.backend.clear_session()
             
             # Combine all batches
             all_shap_values = np.concatenate(all_shap_values, axis=0)
