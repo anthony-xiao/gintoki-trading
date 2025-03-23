@@ -136,64 +136,51 @@ def main():
         assert set(FEATURE_COLUMNS).issubset(combined_data.columns), \
             f"Missing features: {set(FEATURE_COLUMNS) - set(combined_data.columns)}"
         
-        # Create 3D sequences [samples, window, features] with GPU acceleration
-        window_size = args.seq_length
+        # Create 3D sequences [samples, window, features]
+        window_size = args.seq_length  # Use command line argument
         num_features = len(FEATURE_COLUMNS)
         
-        # Convert data to GPU tensor for faster processing
-        feature_data = combined_data[FEATURE_COLUMNS].values.astype(np.float32)
-        feature_tensor = tf.convert_to_tensor(feature_data, dtype=tf.float32)
-        
-        # Process data in chunks with GPU acceleration
+        # Process data in chunks to handle large datasets
         chunk_size = 1000000  # Process 1M rows at a time
         all_sequences = []
         total_rows = len(combined_data)
         
         logger.info(f"🔄 Processing {total_rows} rows in chunks of {chunk_size}")
         
-        # Create a TensorFlow dataset for efficient processing
-        dataset = tf.data.Dataset.from_tensor_slices(feature_tensor)
-        
-        # Define sequence creation function
-        def create_sequences(chunk):
-            sequences = []
+        for start_idx in range(0, total_rows, chunk_size):
+            end_idx = min(start_idx + chunk_size, total_rows)
+            chunk = combined_data.iloc[start_idx:end_idx]
+            
+            # Create sequences for this chunk
+            chunk_sequences = []
             for i in range(window_size, len(chunk)):
-                seq = chunk[i-window_size:i]
+                seq = chunk.iloc[i-window_size:i][FEATURE_COLUMNS].values
                 if seq.shape == (window_size, num_features):
-                    sequences.append(seq)
-            return np.array(sequences, dtype=np.float32)
-        
-        # Process chunks in parallel using tf.data
-        dataset = dataset.batch(chunk_size)
-        dataset = dataset.map(lambda x: tf.py_function(create_sequences, [x], tf.float32))
-        dataset = dataset.prefetch(tf.data.AUTOTUNE)
-        
-        # Process all chunks
-        for chunk_sequences in dataset:
-            if chunk_sequences.shape[0] > 0:  # Only process non-empty chunks
-                all_sequences.append(chunk_sequences)
-                logger.info(f"✅ Processed chunk, shape: {chunk_sequences.shape}")
+                    chunk_sequences.append(seq)
+            
+            # Convert to numpy array and append
+            if chunk_sequences:
+                chunk_array = np.array(chunk_sequences, dtype=np.float32)
+                all_sequences.append(chunk_array)
+                logger.info(f"✅ Processed chunk {start_idx//chunk_size + 1}, shape: {chunk_array.shape}")
             
             # Clear memory
-            tf.keras.backend.clear_session()
+            del chunk_sequences
+            del chunk
             gc.collect()
         
         # Combine all sequences
         X = np.concatenate(all_sequences, axis=0)
         logger.info(f"📊 Final sequence shape: {X.shape}")
 
-        # Align labels with sequences using GPU
-        y = tf.where(
-            tf.gather(combined_data['close'].values[1:], tf.range(len(combined_data)-1)) > 
-            tf.gather(combined_data['close'].values[:-1], tf.range(len(combined_data)-1)),
-            1, -1
-        ).numpy()[window_size:]
-        
+        # Align labels with sequences
+        y = np.where(combined_data['close'].shift(-1) > combined_data['close'], 1, -1)[window_size:]
+
         # Convert sequences to GPU tensors for faster processing
         X = tf.convert_to_tensor(X, dtype=tf.float32)
         y = tf.convert_to_tensor(y, dtype=tf.int32)
         
-        # Create TensorFlow datasets with optimized pipeline
+        # Create TensorFlow datasets with GPU optimization
         train_ds = tf.data.Dataset.from_tensor_slices((X, y)) \
             .cache() \
             .shuffle(buffer_size=10000) \
