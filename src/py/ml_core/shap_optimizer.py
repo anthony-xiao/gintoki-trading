@@ -148,84 +148,63 @@ class EnhancedSHAPOptimizer:
             logger.error(f"Error in trend prediction: {str(e)}")
             raise
 
-    def optimize_features(self, input_data: Union[str, np.ndarray], top_k: int = 15) -> np.ndarray:
-        """Day trading focused feature optimization"""
+    def optimize_features(self, data_path: str, top_k: int = 15) -> List[int]:
+        """Optimize features for day trading using SHAP values"""
         try:
             logger.info("Starting feature optimization for day trading")
             
-            # Load data
-            data = self._load_input_data(input_data)
-            logger.info(f"Loaded data shape: {data.shape}")
+            # Load input data
+            logger.info(f"Loading input data from {data_path}")
+            data = np.load(data_path)
+            X = data['X']
+            logger.info(f"Loaded data shape: {X.shape}")
+            logger.info(f"Loaded data features: {X.shape[-1]}")
             
-            # Calculate total number of features across all timesteps
-            n_samples, n_timesteps, n_features = data.shape
+            # Reshape data to match background shape
+            n_samples, n_timesteps, n_features = X.shape
             total_features = n_timesteps * n_features
-            required_evals = 2 * total_features + 1
             logger.info(f"Total features across timesteps: {total_features}")
+            
+            # Calculate required evaluations
+            required_evals = 2 * total_features + 1
             logger.info(f"Required evaluations: {required_evals}")
             
-            # Calculate npermutations to ensure we have enough evaluations
-            npermutations = int(np.ceil(required_evals / n_timesteps))
-            logger.info(f"Number of timesteps: {n_timesteps}")
-            logger.info(f"Using {npermutations} permutations per feature")
-            logger.info(f"Total evaluations will be {npermutations * n_timesteps}")
+            # Process in batches
+            batch_size = 100
+            n_batches = (n_samples + batch_size - 1) // batch_size
+            all_shap_values = []
             
-            # Process data in batches to handle large datasets
-            batch_size = 100  # Process 100 samples at a time
-            all_regime_shap = []
-            all_trend_shap = []
+            # Get background shape from the masker
+            background_shape = self.regime_explainer.masker.data.shape[1]
+            logger.info(f"Background shape: {background_shape}")
             
-            for i in range(0, n_samples, batch_size):
-                batch_end = min(i + batch_size, n_samples)
-                batch_data = data[i:batch_end]
+            for i in range(n_batches):
+                start_idx = i * batch_size
+                end_idx = min((i + 1) * batch_size, n_samples)
+                batch = X[start_idx:end_idx]
                 
-                # Reshape batch data for SHAP computation
-                batch_reshaped = batch_data.reshape(batch_end - i, n_timesteps * n_features)
-                logger.info(f"Processing batch {i//batch_size + 1}, shape: {batch_reshaped.shape}")
+                # Reshape batch to match background shape
+                batch_reshaped = batch.reshape(batch.shape[0], -1)
+                logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}")
                 
-                # Compute SHAP values for the batch
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=npermutations)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=npermutations)
+                # Calculate SHAP values for both models
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
                 
-                # Handle list outputs from SHAP
-                if isinstance(regime_shap, list):
-                    regime_shap = regime_shap[0]
-                if isinstance(trend_shap, list):
-                    trend_shap = trend_shap[0]
-                
-                # Reshape SHAP values back to original dimensions
-                regime_shap = regime_shap.reshape(batch_end - i, n_timesteps, n_features)
-                trend_shap = trend_shap.reshape(batch_end - i, n_timesteps, n_features)
-                
-                all_regime_shap.append(regime_shap)
-                all_trend_shap.append(trend_shap)
+                # Combine SHAP values with trading-specific weights
+                combined_shap = self._combine_shap_values(regime_shap, trend_shap)
+                all_shap_values.append(combined_shap)
             
             # Combine all batches
-            regime_shap = np.concatenate(all_regime_shap, axis=0)
-            trend_shap = np.concatenate(all_trend_shap, axis=0)
+            all_shap_values = np.concatenate(all_shap_values, axis=0)
             
-            # Combine SHAP values with trading-specific weights
-            importance = self._combine_shap_values(regime_shap, trend_shap)
-            logger.info(f"Combined importance shape: {importance.shape}")
-            
-            # Apply trading-specific weights
-            weights = self._trading_feature_weights()
-            importance *= weights
-            logger.info("Applied trading-specific weights")
-            
-            # Force include essential features
-            essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
-            importance[essential_idx] += 1000
-            logger.info("Added essential features to selection")
+            # Calculate feature importance with trading-specific considerations
+            feature_importance = self._calculate_feature_importance(all_shap_values)
             
             # Select top features
-            top_features = np.argsort(importance)[-top_k:]
-            logger.info(f"Selected top {top_k} features")
+            top_features = self._select_top_features(feature_importance, top_k)
             
-            # Log selected features
-            selected_features = [self.feature_columns[i] for i in top_features]
-            logger.info(f"Selected features: {selected_features}")
-            
+            logger.info(f"Selected {len(top_features)} features for trading")
             return top_features
             
         except Exception as e:
@@ -251,25 +230,48 @@ class EnhancedSHAPOptimizer:
         return weights
 
     def _combine_shap_values(self, regime_shap: np.ndarray, trend_shap: np.ndarray) -> np.ndarray:
-        """Combine SHAP values from different models with trading-specific weights"""
-        # Weight regime and trend predictions
-        regime_weight = 0.4  # Less weight on regime in day trading
-        trend_weight = 0.6   # More weight on trend
-        
-        # Ensure proper shape handling
+        """Combine SHAP values from both models with trading-specific weights"""
+        # Handle list outputs from SHAP
         if isinstance(regime_shap, list):
             regime_shap = regime_shap[0]
         if isinstance(trend_shap, list):
             trend_shap = trend_shap[0]
+            
+        # Combine SHAP values with trading-specific weights
+        combined = 0.6 * regime_shap + 0.4 * trend_shap
         
-        # Combine SHAP values
-        combined = (
-            regime_weight * np.abs(regime_shap).mean(axis=1).mean(axis=0) +
-            trend_weight * np.abs(trend_shap).mean(axis=1).mean(axis=0)
-        )
+        # Apply trading-specific weights
+        weights = self._trading_feature_weights()
+        combined *= weights
         
-        logger.info(f"Combined SHAP values shape: {combined.shape}")
         return combined
+
+    def _calculate_feature_importance(self, shap_values: np.ndarray) -> np.ndarray:
+        """Calculate feature importance with trading-specific considerations"""
+        # Calculate mean absolute SHAP values
+        importance = np.abs(shap_values).mean(axis=0)
+        
+        # Force include essential features
+        essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
+        importance[essential_idx] += 1000
+        
+        return importance
+
+    def _select_top_features(self, importance: np.ndarray, top_k: int) -> List[int]:
+        """Select top features with trading-specific considerations"""
+        # Ensure essential features are included
+        essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
+        remaining_k = top_k - len(essential_idx)
+        
+        if remaining_k <= 0:
+            return essential_idx[:top_k]
+            
+        # Get remaining top features
+        remaining_features = np.argsort(importance)[-remaining_k:]
+        
+        # Combine and sort
+        all_features = np.concatenate([essential_idx, remaining_features])
+        return sorted(all_features)
 
     def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
         """Reshape 3D data to 2D for SHAP computation with feature validation"""
