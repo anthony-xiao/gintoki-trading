@@ -41,7 +41,16 @@ class TransformerTrendAnalyzer:
         x = tf.keras.layers.Dense(32, activation='relu')(x)
         outputs = tf.keras.layers.Dense(1, activation='tanh')(x)  # [-1, 1] trend score
         
-        return tf.keras.Model(inputs=inputs, outputs=outputs)
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+        
+        # Compile the model
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+            loss=tf.keras.losses.MeanSquaredError(),
+            metrics=[tf.keras.metrics.MeanAbsoluteError()]
+        )
+        
+        return model
     
     def train(self, data_path, epochs=50, batch_size=1024):
         """Train on preprocessed sequences with feature masking"""
