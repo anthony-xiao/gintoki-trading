@@ -185,10 +185,12 @@ def main():
         # 4. SHAP feature optimization
         logger.info("🎯 Phase 4/6: Running SHAP optimization...")
         optimizer = EnhancedSHAPOptimizer(
+            model_path=None,  # Don't load from S3
             background_data=combined_data,
             background_samples=args.shap_samples,
             ticker=args.tickers[0],  # Use the first ticker for SHAP optimization
-            data_loader=loader  # Pass the existing data loader instance
+            data_loader=loader,  # Pass the existing data loader instance
+            trained_model=volatility_model.model  # Pass the model we just trained
         )
         
         # Get optimized features
