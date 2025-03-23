@@ -218,7 +218,7 @@ class EnhancedSHAPOptimizer:
                 batch = X[start_idx:end_idx]
                 
                 # Reshape batch to match background shape and ensure float32
-                batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
+                batch_reshaped = tf.reshape(batch, [batch.shape[0], -1]).numpy().astype(np.float32)
                 batch_tensor = tf.convert_to_tensor(batch_reshaped, dtype=tf.float32)
                 logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
                 
