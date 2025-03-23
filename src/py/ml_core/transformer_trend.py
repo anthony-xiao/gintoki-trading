@@ -6,7 +6,7 @@ import logging
 import os
 
 class TransformerTrendAnalyzer:
-    def __init__(self, seq_length=60, d_model=64, num_heads=8, feature_mask=None):
+    def __init__(self, seq_length=60, d_model=32, num_heads=4, feature_mask=None):
         self.seq_length = seq_length
         self.d_model = d_model
         self.feature_mask = feature_mask
@@ -30,23 +30,27 @@ class TransformerTrendAnalyzer:
             
         inputs = tf.keras.Input(shape=input_shape)
         
-        # Transformer Encoder
-        x = tf.keras.layers.Dense(self.d_model)(inputs)
+        # Input normalization
+        x = tf.keras.layers.BatchNormalization()(inputs)
+        
+        # Transformer Encoder with reduced complexity
+        x = tf.keras.layers.Dense(self.d_model, activation='relu')(x)
         x = LayerNormalization(epsilon=1e-6)(x)
         x = MultiHeadAttention(num_heads=num_heads, key_dim=self.d_model)(x, x)
         x = tf.keras.layers.Dropout(0.1)(x)
         x = tf.keras.layers.GlobalAveragePooling1D()(x)
         
-        # Trend Prediction
-        x = tf.keras.layers.Dense(32, activation='relu')(x)
+        # Trend Prediction with simpler architecture
+        x = tf.keras.layers.Dense(16, activation='relu')(x)
+        x = tf.keras.layers.Dropout(0.1)(x)
         outputs = tf.keras.layers.Dense(1, activation='tanh')(x)  # [-1, 1] trend score
         
         model = tf.keras.Model(inputs=inputs, outputs=outputs)
         
-        # Compile the model
+        # Compile the model with reduced learning rate and binary crossentropy
         model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-            loss=tf.keras.losses.MeanSquaredError(),
+            optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001),
+            loss=tf.keras.losses.BinaryCrossentropy(from_logits=False),
             metrics=[tf.keras.metrics.MeanAbsoluteError()]
         )
         
@@ -65,24 +69,36 @@ class TransformerTrendAnalyzer:
         # Convert labels to trend direction [-1, 1]
         y = np.where(y > 0, 1, -1).astype(np.float32)
         
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-            loss=tf.keras.losses.MeanSquaredError(),
-            metrics=[tf.keras.metrics.MeanAbsoluteError()]
-        )
+        # Add early stopping and learning rate reduction
+        callbacks = [
+            tf.keras.callbacks.EarlyStopping(
+                monitor='loss',
+                patience=5,
+                restore_best_weights=True
+            ),
+            tf.keras.callbacks.ReduceLROnPlateau(
+                monitor='loss',
+                factor=0.5,
+                patience=3,
+                min_lr=0.00001
+            ),
+            tf.keras.callbacks.ModelCheckpoint(
+                'transformer_trend.h5',
+                monitor='loss',
+                save_best_only=True
+            )
+        ]
         
-        self.model.fit(
+        # Train with validation split
+        history = self.model.fit(
             X, y,
             epochs=epochs,
             batch_size=batch_size,
             validation_split=0.2,
-            callbacks=[
-                tf.keras.callbacks.ModelCheckpoint(
-                    'transformer_trend.h5',
-                    save_best_only=True
-                )
-            ]
+            callbacks=callbacks,
+            verbose=1
         )
+        
         logging.info("\U0001F389 Transformer training completed")
         
         # Save final weights with feature metadata
@@ -101,6 +117,8 @@ class TransformerTrendAnalyzer:
             np.savez(f"{model_path}.metadata.npz", **metadata)
         
         logging.info(f"Model saved to {os.path.abspath(model_path)}")
+        
+        return history
 
     def predict_trend_strength(self, sequences):
         """Predict normalized trend strength (-1 to 1) with feature masking"""
