@@ -75,24 +75,29 @@ class EnhancedSHAPOptimizer:
         background_data = self._prepare_background(background_data, background_samples)
         
         # Create masker for feature permutation
-        # Reshape background data to match expected shape (samples, timesteps, features)
+        # Reshape background data to match expected shape (samples, timesteps * features)
         n_samples, n_timesteps, n_features = background_data.shape
-        masker = shap.maskers.Independent(data=background_data.reshape(n_samples, n_timesteps * n_features))
+        background_reshaped = background_data.reshape(n_samples, n_timesteps * n_features)
+        logger.info(f"Reshaped background data shape: {background_reshaped.shape}")
+        
+        # Create masker with reshaped background data
+        masker = shap.maskers.Independent(data=background_reshaped)
         
         # Calculate required max_evals based on feature count
         required_evals = 2 * (n_timesteps * n_features) + 1
         logger.info(f"Setting max_evals to {required_evals} for {n_timesteps * n_features} total features")
         
+        # Initialize explainers with reshaped background data
         self.regime_explainer = shap.PermutationExplainer(
             model=self._predict_regime,
-            data=background_data.reshape(n_samples, n_timesteps * n_features),
+            data=background_reshaped,
             masker=masker,
             max_evals=required_evals
         )
         
         self.trend_explainer = shap.PermutationExplainer(
             model=self._predict_trend,
-            data=background_data.reshape(n_samples, n_timesteps * n_features),
+            data=background_reshaped,
             masker=masker,
             max_evals=required_evals
         )
@@ -170,26 +175,24 @@ class EnhancedSHAPOptimizer:
             logger.info(f"Loaded data shape: {X.shape}")
             logger.info(f"Loaded data features: {X.shape[-1]}")
             
-            # Convert to GPU tensor for faster processing
-            X = tf.convert_to_tensor(X, dtype=tf.float32)
+            # Get background shape from the masker
+            background_shape = self.regime_explainer.masker.data.shape[1]
+            logger.info(f"Background shape: {background_shape}")
             
             # Reshape data to match background shape
             n_samples, n_timesteps, n_features = X.shape
             total_features = n_timesteps * n_features
             logger.info(f"Total features across timesteps: {total_features}")
             
-            # Calculate required evaluations
-            required_evals = 2 * total_features + 1
-            logger.info(f"Required evaluations: {required_evals}")
+            # Ensure data matches background shape
+            if total_features != background_shape:
+                logger.error(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
+                raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
             # Process in batches
             batch_size = 100
             n_batches = (n_samples + batch_size - 1) // batch_size
             all_shap_values = []
-            
-            # Get background shape from the masker
-            background_shape = self.regime_explainer.masker.data.shape[1]
-            logger.info(f"Background shape: {background_shape}")
             
             for i in range(n_batches):
                 start_idx = i * batch_size
@@ -197,12 +200,12 @@ class EnhancedSHAPOptimizer:
                 batch = X[start_idx:end_idx]
                 
                 # Reshape batch to match background shape
-                batch_reshaped = tf.reshape(batch, (batch.shape[0], -1))
+                batch_reshaped = batch.reshape(batch.shape[0], -1)
                 logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}")
                 
                 # Calculate SHAP values for both models
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped.numpy(), npermutations=21)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped.numpy(), npermutations=21)
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
                 
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)
