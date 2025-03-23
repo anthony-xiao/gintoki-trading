@@ -38,7 +38,8 @@ class ModelFactory:
         try:
             # Save model to memory
             model_buffer = BytesIO()
-            model.save(model_buffer, save_format='h5')
+            # Use new Keras 3 format - just use the extension to specify format
+            model.save(model_buffer, filepath='model.h5')
             model_buffer.seek(0)
             
             # Generate S3 key with timestamp
