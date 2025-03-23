@@ -12,6 +12,7 @@ from .volatility_regime import EnhancedVolatilityDetector
 from .transformer_trend import TransformerTrendAnalyzer
 from .ensemble_strategy import AdaptiveEnsembleTrader
 import time
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +37,24 @@ class ModelFactory:
     def save_model_to_s3(self, model: tf.keras.Model, model_name: str, version: Optional[str] = None) -> str:
         """Save model to S3"""
         try:
-            # Save model to memory
-            model_buffer = BytesIO()
-            # Save complete model to buffer
-            model.save(model_buffer, save_format='h5')
-            model_buffer.seek(0)
-            
             # Generate S3 key with timestamp
             s3_key = self._get_s3_key(model_name, version)
             
-            # Upload to S3
-            self.s3_client.upload_fileobj(
-                model_buffer,
-                self.bucket,
-                s3_key,
-                ExtraArgs={'ContentType': 'application/octet-stream'}
-            )
+            # Create a temporary file with .h5 extension
+            with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
+                # Save model directly to temporary file
+                model.save(temp_file.name)
+                
+                # Upload the temporary file to S3
+                self.s3_client.upload_file(
+                    temp_file.name,
+                    self.bucket,
+                    s3_key,
+                    ExtraArgs={'ContentType': 'application/octet-stream'}
+                )
+                
+                # Clean up temporary file
+                os.unlink(temp_file.name)
             
             logger.info(f"Saved {model_name} model to s3://{self.bucket}/{s3_key}")
             return s3_key
