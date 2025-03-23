@@ -187,6 +187,7 @@ class EnhancedSHAPOptimizer:
             # Ensure data matches background shape
             if total_features != background_shape:
                 logger.error(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
+                logger.error(f"Input shape: {X.shape}, Background shape: {self.regime_explainer.masker.data.shape}")
                 raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
             # Process in batches
@@ -510,8 +511,8 @@ class EnhancedSHAPOptimizer:
                 return self._load_production_background(n_samples)
             
             logger.info(f"Preparing background data with {n_samples} samples")
-            # Use the existing data loader instance
-            sequences = self.data_loader.create_sequences(data)
+            # Use the existing data loader instance with the same window size as training
+            sequences = self.data_loader.create_sequences(data, sequence_length=60)  # Use same window size as training
             logger.info(f"Created sequences shape: {sequences.shape}")
             
             # Sample background data with trading-specific considerations
@@ -527,7 +528,7 @@ class EnhancedSHAPOptimizer:
                     logger.info("Attempting to filter current data for better quality samples")
                     df = data.copy()
                     df = self._filter_trading_data(df)
-                    sequences = self.data_loader.create_sequences(df)
+                    sequences = self.data_loader.create_sequences(df, sequence_length=60)  # Use same window size
                     
                     if len(sequences) > n_samples:
                         indices = np.random.choice(len(sequences), n_samples, replace=False)
