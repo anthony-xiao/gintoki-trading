@@ -184,10 +184,11 @@ class EnhancedSHAPOptimizer:
             X = data['X']
             logger.info(f"Loaded data shape: {X.shape}")
             logger.info(f"Loaded data features: {X.shape[-1]}")
+            logger.info(f"Loaded data dtype: {X.dtype}")
             
-            # Convert data to float32 for SHAP compatibility and GPU acceleration
+            # Convert data to float32 for SHAP compatibility
             X = X.astype(np.float32)
-            X = tf.convert_to_tensor(X, dtype=tf.float32)
+            logger.info(f"Converted data dtype: {X.dtype}")
             
             # Get background shape from the masker
             background_shape = self.regime_explainer.masker.data.shape[1]
@@ -218,14 +219,12 @@ class EnhancedSHAPOptimizer:
                 batch = X[start_idx:end_idx]
                 
                 # Reshape batch to match background shape and ensure float32
-                batch_reshaped = tf.reshape(batch, [batch.shape[0], -1]).numpy().astype(np.float32)
-                batch_tensor = tf.convert_to_tensor(batch_reshaped, dtype=tf.float32)
+                batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
                 logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
                 
-                # Calculate SHAP values for both models using GPU-accelerated predictions
-                with tf.device('/GPU:0'):  # Force GPU usage for predictions
-                    regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
-                    trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                # Calculate SHAP values for both models
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
                 
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)
