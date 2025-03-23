@@ -129,8 +129,9 @@ class EnhancedSHAPOptimizer:
             # Get model predictions with GPU acceleration
             with tf.device('/GPU:0'):  # Force GPU usage
                 predictions = self.regime_model.predict(x_tensor, verbose=0)
-                # Ensure predictions are on CPU for SHAP
-                predictions = predictions.numpy()
+                # Convert to numpy if it's a tensor, otherwise use as is
+                if isinstance(predictions, tf.Tensor):
+                    predictions = predictions.numpy()
             
             return predictions[:, 0]  # Return first output for SHAP
             
@@ -162,8 +163,9 @@ class EnhancedSHAPOptimizer:
             # Get model predictions with GPU acceleration
             with tf.device('/GPU:0'):  # Force GPU usage
                 predictions = self.transformer_model.predict(x_tensor, verbose=0)
-                # Ensure predictions are on CPU for SHAP
-                predictions = predictions.numpy()
+                # Convert to numpy if it's a tensor, otherwise use as is
+                if isinstance(predictions, tf.Tensor):
+                    predictions = predictions.numpy()
             
             return predictions.flatten()  # Return flattened predictions
             
