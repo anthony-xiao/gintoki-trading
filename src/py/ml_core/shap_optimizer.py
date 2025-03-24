@@ -279,9 +279,17 @@ class EnhancedSHAPOptimizer:
         # Combine SHAP values with trading-specific weights
         combined = 0.6 * regime_shap + 0.4 * trend_shap
         
-        # Apply trading-specific weights
+        # Get the number of timesteps from the SHAP values shape
+        n_features = len(self.feature_columns)
+        n_timesteps = combined.shape[1] // n_features
+        
+        # Create weights array that matches the sequence shape
         weights = self._trading_feature_weights()
-        combined *= weights
+        # Repeat weights for each timestep
+        weights_repeated = np.tile(weights, n_timesteps)
+        
+        # Apply weights to the combined SHAP values
+        combined *= weights_repeated
         
         return combined
 
