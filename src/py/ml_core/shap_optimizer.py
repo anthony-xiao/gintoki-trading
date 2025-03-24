@@ -209,40 +209,77 @@ class EnhancedSHAPOptimizer:
                 logger.error(f"Input shape: {X.shape}, Background shape: {self.regime_explainer.masker.data.shape}")
                 raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
-            # Process in batches with GPU optimization
-            batch_size = 100
-            n_batches = (n_samples + batch_size - 1) // batch_size
+            # Optimize batch size based on available GPU memory
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                # Get GPU memory info
+                gpu_memory = tf.config.experimental.get_memory_info('GPU:0')
+                available_memory = gpu_memory['available'] / (1024**3)  # Convert to GB
+                # Calculate optimal batch size based on available memory
+                # Assuming each sample uses ~100MB of GPU memory
+                optimal_batch_size = min(1000, int(available_memory * 10))
+                logger.info(f"Using optimal batch size: {optimal_batch_size} based on {available_memory:.1f}GB GPU memory")
+            else:
+                optimal_batch_size = 500  # Default for CPU
+                logger.info("No GPU detected, using default batch size: 500")
+            
+            # Process in optimized batches with GPU optimization
+            n_batches = (n_samples + optimal_batch_size - 1) // optimal_batch_size
             all_shap_values = []
             
             # Clear GPU memory before starting
             tf.keras.backend.clear_session()
             
-            for i in range(n_batches):
-                start_idx = i * batch_size
-                end_idx = min((i + 1) * batch_size, n_samples)
-                batch = X[start_idx:end_idx]
-                
-                # Reshape batch to match background shape and ensure float32
-                batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
-                logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
-                
-                # Calculate SHAP values for both models
-                # Production mode (12-13 days runtime)
-                # regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
-                # trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
-                # Quick testing mode (1 hour runtime)
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=2)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=2)
-                
-                # Combine SHAP values with trading-specific weights
-                combined_shap = self._combine_shap_values(regime_shap, trend_shap)
-                all_shap_values.append(combined_shap)
-                
-                # Clear GPU memory after each batch
-                tf.keras.backend.clear_session()
+            # Create a thread pool for parallel processing
+            from concurrent.futures import ThreadPoolExecutor
+            import threading
+            
+            # Thread-local storage for TensorFlow sessions
+            thread_local = threading.local()
+            
+            def process_batch(batch_idx):
+                try:
+                    # Get thread-local TF session
+                    if not hasattr(thread_local, "session"):
+                        thread_local.session = tf.Session()
+                    
+                    start_idx = batch_idx * optimal_batch_size
+                    end_idx = min((batch_idx + 1) * optimal_batch_size, n_samples)
+                    batch = X[start_idx:end_idx]
+                    
+                    # Reshape batch to match background shape and ensure float32
+                    batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
+                    logger.info(f"Processing batch {batch_idx+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
+                    
+                    # Calculate SHAP values for both models
+                    regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
+                    trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                    
+                    # Combine SHAP values with trading-specific weights
+                    combined_shap = self._combine_shap_values(regime_shap, trend_shap)
+                    
+                    # Clear GPU memory after each batch
+                    tf.keras.backend.clear_session()
+                    
+                    return combined_shap
+                    
+                except Exception as e:
+                    logger.error(f"Error processing batch {batch_idx}: {str(e)}")
+                    raise
+            
+            # Process batches in parallel with optimal number of workers
+            n_workers = min(4, n_batches)  # Use up to 4 workers
+            logger.info(f"Processing {n_batches} batches with {n_workers} workers")
+            
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                batch_results = list(tqdm(
+                    executor.map(process_batch, range(n_batches)),
+                    total=n_batches,
+                    desc="Processing batches"
+                ))
             
             # Combine all batches
-            all_shap_values = np.concatenate(all_shap_values, axis=0)
+            all_shap_values = np.concatenate(batch_results, axis=0)
             
             # Calculate feature importance with trading-specific considerations
             feature_importance = self._calculate_feature_importance(all_shap_values)
