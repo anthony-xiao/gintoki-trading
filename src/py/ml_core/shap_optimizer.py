@@ -85,7 +85,10 @@ class EnhancedSHAPOptimizer:
         masker = shap.maskers.Independent(data=background_reshaped)
         
         # Calculate required max_evals based on feature count
-        required_evals = 2 * (n_timesteps * n_features) + 1
+        # Production mode (12-13 days runtime)
+        # required_evals = 2 * (n_timesteps * n_features) + 1
+        # Quick testing mode (1 hour runtime)
+        required_evals = n_timesteps * n_features
         logger.info(f"Setting max_evals to {required_evals} for {n_timesteps * n_features} total features")
         
         # Initialize explainers with reshaped background data
@@ -224,8 +227,12 @@ class EnhancedSHAPOptimizer:
                 logger.info(f"Processing batch {i+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
                 
                 # Calculate SHAP values for both models
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                # Production mode (12-13 days runtime)
+                # regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
+                # trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                # Quick testing mode (1 hour runtime)
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=10)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=10)
                 
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)

@@ -102,3 +102,38 @@ graph TD
     C -->|3. Load Models| D[TradingEngine]
     D -->|4. Use Models| E[Generate Signals]
     E -->|5. Execute Trades| F[Update Weights]
+
+SHAP Optimization Configuration Guide
+
+Quick Testing Mode (1 hour runtime):
+1. In train.py, run with increased SHAP samples:
+   python train.py --shap-samples 10000 ...  # Increased from 1000
+
+2. In shap_optimizer.py, the following parameters are already set for quick testing:
+   - required_evals = n_timesteps * n_features  # Production mode is commented out
+   - npermutations = 10  # Production mode is commented out
+
+Full Production Mode (12-13 days runtime):
+1. In train.py, run with default SHAP samples:
+   python train.py --shap-samples 1000 ...  # Default value
+
+2. In shap_optimizer.py, simply uncomment the production values and comment out the quick testing values:
+   - Uncomment: required_evals = 2 * (n_timesteps * n_features) + 1
+   - Uncomment: npermutations = 21
+   - Comment out the quick testing values
+
+Expected Processing Times:
+- Quick Testing Mode: ~1 hour
+- Full Production Mode: 12-13 days
+
+Accuracy Impact:
+- Quick Testing Mode:
+  * Minimal impact on essential features
+  * Moderate impact on feature interactions
+  * Reduced edge case detection
+- Full Production Mode:
+  * Maximum accuracy for all features
+  * Complete feature interaction analysis
+  * Comprehensive edge case detection
+
+Note: The full production mode provides the most accurate results but requires significantly more processing time. Use quick testing mode for initial development and testing, and full production mode for final model optimization. The code includes both configurations commented/uncommented for easy switching between modes.
