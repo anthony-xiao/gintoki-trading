@@ -79,6 +79,7 @@ class EnhancedSHAPOptimizer:
         n_samples, n_timesteps, n_features = background_data.shape
         background_reshaped = background_data.reshape(n_samples, n_timesteps * n_features).astype(np.float32)
         logger.info(f"Reshaped background data shape: {background_reshaped.shape}")
+        logger.info(f"Reshaped background data dtype: {background_reshaped.dtype}")
         
         # Create masker with reshaped background data
         masker = shap.maskers.Independent(data=background_reshaped)
@@ -123,7 +124,7 @@ class EnhancedSHAPOptimizer:
                 # If input is (n_timesteps * n_features,)
                 x = x.reshape(1, n_timesteps, n_features)
             
-            # Convert to tensorflow tensor and ensure GPU usage
+            # Convert to tensorflow tensor and ensure float32
             x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
             
             # Get model predictions with GPU acceleration
@@ -133,7 +134,7 @@ class EnhancedSHAPOptimizer:
                 if isinstance(predictions, tf.Tensor):
                     predictions = predictions.numpy()
             
-            return predictions[:, 0]  # Return first output for SHAP
+            return predictions[:, 0].astype(np.float32)  # Return first output for SHAP
             
         except Exception as e:
             logger.error(f"Error in regime prediction: {str(e)}")
@@ -157,7 +158,7 @@ class EnhancedSHAPOptimizer:
                 # If input is (n_timesteps * n_features,)
                 x = x.reshape(1, n_timesteps, n_features)
             
-            # Convert to tensorflow tensor and ensure GPU usage
+            # Convert to tensorflow tensor and ensure float32
             x_tensor = tf.convert_to_tensor(x, dtype=tf.float32)
             
             # Get model predictions with GPU acceleration
@@ -167,7 +168,7 @@ class EnhancedSHAPOptimizer:
                 if isinstance(predictions, tf.Tensor):
                     predictions = predictions.numpy()
             
-            return predictions.flatten()  # Return flattened predictions
+            return predictions.flatten().astype(np.float32)  # Return flattened predictions
             
         except Exception as e:
             logger.error(f"Error in trend prediction: {str(e)}")
@@ -536,6 +537,9 @@ class EnhancedSHAPOptimizer:
             sequences = self.data_loader.create_sequences(data, sequence_length=60)  # Use same window size as training
             logger.info(f"Created sequences shape: {sequences.shape}")
             
+            # Ensure float32 data type
+            sequences = sequences.astype(np.float32)
+            
             # Sample background data with trading-specific considerations
             if len(sequences) > n_samples:
                 # Ensure we have enough samples from different market conditions
@@ -550,6 +554,7 @@ class EnhancedSHAPOptimizer:
                     df = data.copy()
                     df = self._filter_trading_data(df)
                     sequences = self.data_loader.create_sequences(df, sequence_length=60)  # Use same window size
+                    sequences = sequences.astype(np.float32)  # Ensure float32
                     
                     if len(sequences) > n_samples:
                         indices = np.random.choice(len(sequences), n_samples, replace=False)
@@ -565,6 +570,7 @@ class EnhancedSHAPOptimizer:
                 background = sequences
                 
             logger.info(f"Final background shape: {background.shape}")
+            logger.info(f"Final background dtype: {background.dtype}")
             return background
             
         except Exception as e:
