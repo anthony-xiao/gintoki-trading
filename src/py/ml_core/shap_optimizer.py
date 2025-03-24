@@ -231,8 +231,8 @@ class EnhancedSHAPOptimizer:
                 # regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
                 # trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
                 # Quick testing mode (1 hour runtime)
-                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=10)
-                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=10)
+                regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=2)
+                trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=2)
                 
                 # Combine SHAP values with trading-specific weights
                 combined_shap = self._combine_shap_values(regime_shap, trend_shap)
