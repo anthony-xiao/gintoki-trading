@@ -44,6 +44,13 @@ class EnhancedSHAPOptimizer:
             except RuntimeError as e:
                 logger.error(f"Error configuring GPU: {str(e)}")
         
+        # Production mode
+        # background_samples = background_samples  # Use the full number of samples provided
+        # Quick testing mode: Reduce background samples
+        if background_samples > 100:
+            logger.warning("Quick testing mode: Reducing background samples to 100")
+            background_samples = 100
+        
         self.registry = EnhancedModelRegistry()
         self.data_loader = data_loader if data_loader is not None else EnhancedDataLoader()
         self.ticker = ticker  # Store ticker
@@ -199,6 +206,14 @@ class EnhancedSHAPOptimizer:
             X = data['X']
             logger.info(f"Loaded data shape: {X.shape}")
             
+            # Production mode
+            # X = X  # Use all records
+            # Quick testing mode: Sample a small subset of data
+            if len(X) > 1000:
+                logger.warning("Quick testing mode: Sampling 1000 records for testing")
+                indices = np.random.choice(len(X), 1000, replace=False)
+                X = X[indices]
+            
             # Convert data to float32 for SHAP compatibility
             X = X.astype(np.float32)
             
@@ -214,7 +229,10 @@ class EnhancedSHAPOptimizer:
                 raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
             # Process in larger batches with parallel processing
-            batch_size = 1000  # Increased from 100
+            # Production mode
+            # batch_size = 1000
+            # Quick testing mode
+            batch_size = 100
             n_batches = (n_samples + batch_size - 1) // batch_size
             all_shap_values = []
             
@@ -222,7 +240,11 @@ class EnhancedSHAPOptimizer:
             tf.keras.backend.clear_session()
             
             # Create a ThreadPoolExecutor for parallel processing
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            # Production mode
+            # max_workers = 4
+            # Quick testing mode
+            max_workers = 2
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = []
                 
                 for i in range(n_batches):
@@ -271,8 +293,12 @@ class EnhancedSHAPOptimizer:
         try:
             # Calculate SHAP values for both models with GPU acceleration
             with tf.device('/GPU:0'):
-                regime_shap = self.regime_explainer.shap_values(batch, npermutations=21)
-                trend_shap = self.trend_explainer.shap_values(batch, npermutations=21)
+                # Production mode
+                # npermutations = 21
+                # Quick testing mode
+                npermutations = 2
+                regime_shap = self.regime_explainer.shap_values(batch, npermutations=npermutations)
+                trend_shap = self.trend_explainer.shap_values(batch, npermutations=npermutations)
             
             # Combine SHAP values with trading-specific weights
             combined_shap = self._combine_shap_values(regime_shap, trend_shap)
@@ -287,12 +313,19 @@ class EnhancedSHAPOptimizer:
         """Calculate feature importance with parallel processing"""
         try:
             # Split SHAP values into chunks for parallel processing
-            n_chunks = 4
+            # Production mode
+            # n_chunks = 4
+            # Quick testing mode
+            n_chunks = 2
             chunk_size = len(shap_values) // n_chunks
             chunks = np.array_split(shap_values, n_chunks)
             
             # Process chunks in parallel
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            # Production mode
+            # max_workers = 4
+            # Quick testing mode
+            max_workers = 2
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(self._process_chunk, chunk) for chunk in chunks]
                 chunk_importances = [future.result() for future in as_completed(futures)]
             
