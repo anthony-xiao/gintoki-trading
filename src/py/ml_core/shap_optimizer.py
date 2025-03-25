@@ -103,11 +103,12 @@ class EnhancedSHAPOptimizer:
         masker = shap.maskers.Independent(data=background_reshaped)
         
         # Calculate required max_evals based on feature count
+        n_total_features = n_timesteps * n_features
         # Production mode (12-13 days runtime)
-        # required_evals = 2 * (n_timesteps * n_features) + 1
+        # required_evals = 2 * n_total_features + 1
         # Quick testing mode (1 hour runtime)
-        required_evals = n_timesteps * n_features
-        logger.info(f"Setting max_evals to {required_evals} for {n_timesteps * n_features} total features")
+        required_evals = max(2 * n_total_features + 1, n_timesteps * n_features)  # Ensure minimum requirement is met
+        logger.info(f"Setting max_evals to {required_evals} for {n_total_features} total features")
         
         # Initialize explainers with reshaped background data
         self.regime_explainer = shap.PermutationExplainer(
