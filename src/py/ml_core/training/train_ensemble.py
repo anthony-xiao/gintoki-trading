@@ -42,12 +42,9 @@ def load_pretrained_models(model_factory, model_version):
     """Load all necessary pre-trained models and configurations."""
     logger.info("📦 Loading pre-trained models and configurations...")
     
-    # Load feature mask and metadata
-    feature_mask_path = f"{model_factory.model_prefix}features/models/test_v1_20250325_091600.npz"
-    if model_version:
-        feature_mask_path = f"{model_factory.model_prefix}features/models/{model_version}_20250325_091600.npz"
-    
     try:
+        # Load feature mask and metadata using ModelFactory's method
+        feature_mask_path = model_factory._get_s3_key('features', model_version)
         feature_mask_data = np.load(model_factory.s3_client.get_object(
             Bucket=model_factory.bucket,
             Key=feature_mask_path
@@ -60,41 +57,30 @@ def load_pretrained_models(model_factory, model_version):
         logger.error(f"Failed to load feature mask: {str(e)}")
         raise
 
-    # Load volatility model
-    volatility_path = f"{model_factory.model_prefix}volatility/models/test_v1_20250325_084353.h5"
-    if model_version:
-        volatility_path = f"{model_factory.model_prefix}volatility/models/{model_version}_20250325_084353.h5"
-    
     try:
-        volatility_model = tf.keras.models.load_model(model_factory.s3_client.get_object(
-            Bucket=model_factory.bucket,
-            Key=volatility_path
-        )['Body'].read())
-        logger.info("✅ Loaded volatility model")
-    except Exception as e:
-        logger.error(f"Failed to load volatility model: {str(e)}")
-        raise
-
-    # Load optimized transformer model
-    transformer_path = f"{model_factory.model_prefix}transformer_optimized/models/test_v1_20250325_091604.h5"
-    if model_version:
-        transformer_path = f"{model_factory.model_prefix}transformer_optimized/models/{model_version}_20250325_091604.h5"
-    
-    try:
-        transformer_model = tf.keras.models.load_model(model_factory.s3_client.get_object(
-            Bucket=model_factory.bucket,
-            Key=transformer_path
-        )['Body'].read())
+        # Create model instances first
+        model_factory.create_models()
+        
+        # Load pre-trained weights into the models
+        model_factory.load_models(model_version)
+        
+        # Get the models from the factory
+        volatility_model = model_factory.models['volatility'].model
+        
+        # Load the optimized transformer model specifically
+        optimized_transformer = model_factory.load_model_from_s3('transformer_optimized', model_version)
         logger.info("✅ Loaded optimized transformer model")
+        
+        logger.info("✅ Loaded all pre-trained models")
     except Exception as e:
-        logger.error(f"Failed to load transformer model: {str(e)}")
+        logger.error(f"Failed to load models: {str(e)}")
         raise
 
     return {
         'feature_mask': feature_mask,
         'feature_metadata': feature_metadata,
         'volatility_model': volatility_model,
-        'transformer_model': transformer_model
+        'transformer_model': optimized_transformer  # Use the optimized transformer
     }
 
 def main():
@@ -167,8 +153,58 @@ def main():
         signals = ensemble.calculate_signals(
             processed_data,
             volatility_model=pretrained_models['volatility_model'],
-            transformer_model=pretrained_models['transformer_model']
+            transformer_model=pretrained_models['transformer_model']  # Using optimized transformer
         )
+        
+        # Analyze and log signal performance
+        logger.info("📊 Analyzing ensemble signal performance...")
+        
+        # Calculate signal statistics
+        signal_values = signals['signal']
+        signal_confidence = signals['confidence']
+        regime_distribution = signals['regime']
+        
+        # Calculate basic metrics
+        positive_signals = np.sum(signal_values > 0)
+        negative_signals = np.sum(signal_values < 0)
+        neutral_signals = np.sum(signal_values == 0)
+        total_signals = len(signal_values)
+        
+        # Calculate regime distribution
+        regime_counts = pd.Series(regime_distribution).value_counts()
+        regime_percentages = regime_counts / total_signals * 100
+        
+        # Log performance metrics
+        logger.info(f"Signal Distribution:")
+        logger.info(f"  - Positive signals: {positive_signals} ({positive_signals/total_signals*100:.1f}%)")
+        logger.info(f"  - Negative signals: {negative_signals} ({negative_signals/total_signals*100:.1f}%)")
+        logger.info(f"  - Neutral signals: {neutral_signals} ({neutral_signals/total_signals*100:.1f}%)")
+        
+        logger.info(f"Regime Distribution:")
+        for regime, count in regime_counts.items():
+            logger.info(f"  - {regime}: {count} ({regime_percentages[regime]:.1f}%)")
+        
+        # Calculate confidence metrics
+        avg_confidence = np.mean(signal_confidence)
+        high_confidence_signals = np.sum(signal_confidence > 0.7)
+        logger.info(f"Signal Confidence:")
+        logger.info(f"  - Average confidence: {avg_confidence:.3f}")
+        logger.info(f"  - High confidence signals (>0.7): {high_confidence_signals} ({high_confidence_signals/total_signals*100:.1f}%)")
+        
+        # Save signal analysis to metadata
+        signal_analysis = {
+            'signal_distribution': {
+                'positive': int(positive_signals),
+                'negative': int(negative_signals),
+                'neutral': int(neutral_signals),
+                'total': int(total_signals)
+            },
+            'regime_distribution': regime_counts.to_dict(),
+            'confidence_metrics': {
+                'average': float(avg_confidence),
+                'high_confidence_count': int(high_confidence_signals)
+            }
+        }
         
         # Save all models and ensemble configuration to S3
         model_paths = model_factory.save_models(args.model_version)
@@ -178,12 +214,13 @@ def main():
         for model_name, s3_path in model_paths.items():
             logger.info(f"  - {model_name}: s3://{model_factory.bucket}/{s3_path}")
             
-        # Save model paths to a metadata file for future reference
+        # Save model paths and signal analysis to a metadata file for future reference
         metadata = {
             'model_paths': model_paths,
             'version': args.model_version,
             'timestamp': time.strftime('%Y%m%d_%H%M%S'),
             'config': model_config,
+            'signal_analysis': signal_analysis,
             'feature_metadata': pretrained_models['feature_metadata']
         }
         

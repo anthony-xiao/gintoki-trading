@@ -280,8 +280,12 @@ def main():
         logger.info("🚢 Phase 6/6: Training adaptive ensemble...")
         ensemble = model_factory.ensemble
         
-        # Preprocess data
-        processed_data = ensemble.preprocess_data(combined_data)
+        # Preprocess data with feature mask and metadata
+        processed_data = ensemble.preprocess_data(
+            combined_data,
+            feature_mask=top_features,  # Use the feature mask from SHAP optimization
+            feature_metadata=feature_metadata  # Use the feature metadata from SHAP optimization
+        )
         
         # Train XGBoost model
         logger.info("Training XGBoost momentum model...")
@@ -294,9 +298,63 @@ def main():
         anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values
         ensemble.models['isolation_forest'].fit(anomaly_features)
         
-        # Calculate initial signals
+        # Calculate initial signals using optimized transformer
         logger.info("Calculating initial ensemble signals...")
-        signals = ensemble.calculate_signals(processed_data)
+        signals = ensemble.calculate_signals(
+            processed_data,
+            volatility_model=model_factory.models['volatility'].model,
+            transformer_model=model_factory.models['transformer_optimized'].model  # Use optimized transformer
+        )
+        
+        # Analyze and log signal performance
+        logger.info("📊 Analyzing ensemble signal performance...")
+        
+        # Calculate signal statistics
+        signal_values = signals['signal']
+        signal_confidence = signals['confidence']
+        regime_distribution = signals['regime']
+        
+        # Calculate basic metrics
+        positive_signals = np.sum(signal_values > 0)
+        negative_signals = np.sum(signal_values < 0)
+        neutral_signals = np.sum(signal_values == 0)
+        total_signals = len(signal_values)
+        
+        # Calculate regime distribution
+        regime_counts = pd.Series(regime_distribution).value_counts()
+        regime_percentages = regime_counts / total_signals * 100
+        
+        # Log performance metrics
+        logger.info(f"Signal Distribution:")
+        logger.info(f"  - Positive signals: {positive_signals} ({positive_signals/total_signals*100:.1f}%)")
+        logger.info(f"  - Negative signals: {negative_signals} ({negative_signals/total_signals*100:.1f}%)")
+        logger.info(f"  - Neutral signals: {neutral_signals} ({neutral_signals/total_signals*100:.1f}%)")
+        
+        logger.info(f"Regime Distribution:")
+        for regime, count in regime_counts.items():
+            logger.info(f"  - {regime}: {count} ({regime_percentages[regime]:.1f}%)")
+        
+        # Calculate confidence metrics
+        avg_confidence = np.mean(signal_confidence)
+        high_confidence_signals = np.sum(signal_confidence > 0.7)
+        logger.info(f"Signal Confidence:")
+        logger.info(f"  - Average confidence: {avg_confidence:.3f}")
+        logger.info(f"  - High confidence signals (>0.7): {high_confidence_signals} ({high_confidence_signals/total_signals*100:.1f}%)")
+        
+        # Save signal analysis to metadata
+        signal_analysis = {
+            'signal_distribution': {
+                'positive': int(positive_signals),
+                'negative': int(negative_signals),
+                'neutral': int(neutral_signals),
+                'total': int(total_signals)
+            },
+            'regime_distribution': regime_counts.to_dict(),
+            'confidence_metrics': {
+                'average': float(avg_confidence),
+                'high_confidence_count': int(high_confidence_signals)
+            }
+        }
         
         # Save all models and ensemble configuration to S3
         model_paths = model_factory.save_models(args.model_version)
@@ -306,12 +364,14 @@ def main():
         for model_name, s3_path in model_paths.items():
             logger.info(f"  - {model_name}: s3://{model_factory.bucket}/{s3_path}")
             
-        # Save model paths to a metadata file for future reference
+        # Save model paths and signal analysis to a metadata file for future reference
         metadata = {
             'model_paths': model_paths,
             'version': args.model_version,
             'timestamp': time.strftime('%Y%m%d_%H%M%S'),
-            'config': model_config
+            'config': model_config,
+            'signal_analysis': signal_analysis,
+            'feature_metadata': feature_metadata  # Include feature metadata in the output
         }
         
         # Save metadata to S3
