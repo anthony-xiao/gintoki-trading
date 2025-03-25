@@ -38,9 +38,36 @@ def configure_logging():
 
 logger = configure_logging()
 
+def list_available_models(s3_client, bucket, prefix):
+    """List all available models in S3."""
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        if 'Contents' in response:
+            models = [obj['Key'] for obj in response['Contents']]
+            logger.info(f"Available models in s3://{bucket}/{prefix}:")
+            for model in models:
+                logger.info(f"  - {model}")
+            return models
+        else:
+            logger.warning(f"No models found in s3://{bucket}/{prefix}")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to list models: {str(e)}")
+        return []
+
 def load_pretrained_models(model_factory, model_version):
     """Load all necessary pre-trained models and configurations."""
     logger.info("📦 Loading pre-trained models and configurations...")
+    
+    # First, check what models are available
+    available_models = list_available_models(
+        model_factory.s3_client,
+        model_factory.bucket,
+        model_factory.model_prefix
+    )
+    
+    if not available_models:
+        raise ValueError("No pre-trained models found in S3. Please run train.py first to generate the models.")
     
     # Load feature mask and metadata
     feature_mask_path = f"{model_factory.model_prefix}features/enhanced_feature_mask.npz"
@@ -58,6 +85,7 @@ def load_pretrained_models(model_factory, model_version):
         logger.info(f"✅ Loaded feature mask with {len(feature_mask)} features")
     except Exception as e:
         logger.error(f"Failed to load feature mask: {str(e)}")
+        logger.error("Please make sure you have run train.py first to generate the feature mask.")
         raise
 
     # Load volatility model
@@ -73,6 +101,7 @@ def load_pretrained_models(model_factory, model_version):
         logger.info("✅ Loaded volatility model")
     except Exception as e:
         logger.error(f"Failed to load volatility model: {str(e)}")
+        logger.error("Please make sure you have run train.py first to generate the volatility model.")
         raise
 
     # Load optimized transformer model
@@ -88,6 +117,7 @@ def load_pretrained_models(model_factory, model_version):
         logger.info("✅ Loaded optimized transformer model")
     except Exception as e:
         logger.error(f"Failed to load transformer model: {str(e)}")
+        logger.error("Please make sure you have run train.py first to generate the transformer model.")
         raise
 
     return {
