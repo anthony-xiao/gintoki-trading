@@ -44,7 +44,7 @@ def load_pretrained_models(model_factory, model_version):
     
     try:
         # Load feature mask and metadata using ModelFactory's method
-        feature_mask_path = model_factory._get_s3_key('features', model_version)
+        feature_mask_path = model_factory._get_s3_key('features', model_version, extension='.npz')
         feature_mask_data = np.load(model_factory.s3_client.get_object(
             Bucket=model_factory.bucket,
             Key=feature_mask_path

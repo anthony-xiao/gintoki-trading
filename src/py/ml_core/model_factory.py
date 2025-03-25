@@ -27,12 +27,12 @@ class ModelFactory:
         self.bucket = config.get('s3_bucket', 'quant-trader-data-gintoki')
         self.model_prefix = config.get('model_prefix', 'models/')
         
-    def _get_s3_key(self, model_name: str, version: Optional[str] = None) -> str:
+    def _get_s3_key(self, model_name: str, version: Optional[str] = None, extension: str = '.h5') -> str:
         """Generate S3 key for model storage using timestamp"""
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         if version:
-            return f"{self.model_prefix}{model_name}/models/{version}_{timestamp}.h5"
-        return f"{self.model_prefix}{model_name}/models/{timestamp}.h5"
+            return f"{self.model_prefix}{model_name}/models/{version}_{timestamp}{extension}"
+        return f"{self.model_prefix}{model_name}/models/{timestamp}{extension}"
         
     def save_model_to_s3(self, model: tf.keras.Model, model_name: str, version: Optional[str] = None) -> str:
         """Save model to S3"""
