@@ -236,7 +236,7 @@ def main():
         
         # Save feature mask and metadata
         feature_metadata = {
-            'selected_features': [FEATURE_COLUMNS[i] for i in top_features],
+            'selected_features': [loader.feature_columns[i] for i in top_features],
             'essential_features': optimizer.essential_features,
             'feature_weights': optimizer._trading_feature_weights().tolist(),
             'timestamp': time.strftime('%Y%m%d_%H%M%S')

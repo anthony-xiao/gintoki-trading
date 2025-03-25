@@ -296,7 +296,7 @@ class EnhancedSHAPOptimizer:
                 # Production mode
                 # npermutations = 21
                 # Quick testing mode
-                npermutations = 2
+                npermutations = 1
                 regime_shap = self.regime_explainer.shap_values(batch, npermutations=npermutations)
                 trend_shap = self.trend_explainer.shap_values(batch, npermutations=npermutations)
             
