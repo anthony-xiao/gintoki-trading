@@ -336,6 +336,11 @@ class EnhancedSHAPOptimizer:
             essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
             importance[essential_idx] += 1000
             
+            # Ensure importance array matches feature count
+            if len(importance) != len(self.feature_columns):
+                logger.warning(f"Importance array length ({len(importance)}) doesn't match feature count ({len(self.feature_columns)})")
+                importance = importance[:len(self.feature_columns)]
+            
             return importance
             
         except Exception as e:
@@ -344,7 +349,8 @@ class EnhancedSHAPOptimizer:
 
     def _process_chunk(self, chunk: np.ndarray) -> np.ndarray:
         """Process a chunk of SHAP values"""
-        return np.abs(chunk).mean(axis=0)
+        # Calculate mean absolute SHAP values across timesteps
+        return np.abs(chunk).mean(axis=(0, 1))  # Average across samples and timesteps
 
     def _trading_feature_weights(self) -> np.ndarray:
         """Trading-specific feature weights"""
@@ -387,6 +393,9 @@ class EnhancedSHAPOptimizer:
         # Apply weights to the combined SHAP values
         combined *= weights_repeated
         
+        # Reshape back to (samples, timesteps, features) for proper feature importance calculation
+        combined = combined.reshape(-1, n_timesteps, n_features)
+        
         return combined
 
     def _calculate_feature_importance(self, shap_values: np.ndarray) -> np.ndarray:
@@ -402,19 +411,35 @@ class EnhancedSHAPOptimizer:
 
     def _select_top_features(self, importance: np.ndarray, top_k: int) -> List[int]:
         """Select top features with trading-specific considerations"""
-        # Ensure essential features are included
-        essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
-        remaining_k = top_k - len(essential_idx)
-        
-        if remaining_k <= 0:
-            return essential_idx[:top_k]
+        try:
+            # Ensure importance array matches feature count
+            if len(importance) != len(self.feature_columns):
+                logger.warning(f"Importance array length ({len(importance)}) doesn't match feature count ({len(self.feature_columns)})")
+                importance = importance[:len(self.feature_columns)]
             
-        # Get remaining top features
-        remaining_features = np.argsort(importance)[-remaining_k:]
-        
-        # Combine and sort
-        all_features = np.concatenate([essential_idx, remaining_features])
-        return sorted(all_features)
+            # Ensure essential features are included
+            essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
+            remaining_k = top_k - len(essential_idx)
+            
+            if remaining_k <= 0:
+                return essential_idx[:top_k]
+                
+            # Get remaining top features
+            remaining_features = np.argsort(importance)[-remaining_k:]
+            
+            # Combine and sort
+            all_features = np.concatenate([essential_idx, remaining_features])
+            
+            # Validate indices
+            valid_indices = [idx for idx in all_features if idx < len(self.feature_columns)]
+            if len(valid_indices) != len(all_features):
+                logger.warning(f"Removed {len(all_features) - len(valid_indices)} invalid indices")
+            
+            return sorted(valid_indices)
+            
+        except Exception as e:
+            logger.error(f"Error selecting top features: {str(e)}")
+            raise
 
     def _reshape_for_shap(self, data: np.ndarray) -> np.ndarray:
         """Reshape 3D data to 2D for SHAP computation with feature validation"""
