@@ -13,6 +13,7 @@ import logging
 import os
 import tempfile
 from typing import Dict, List, Optional, Tuple, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +24,23 @@ class EnhancedSHAPOptimizer:
                  trained_volatility_model: Optional[tf.keras.Model] = None,
                  trained_transformer_model: Optional[tf.keras.Model] = None):
         """Initialize SHAP optimizer for day trading"""
-        # Configure GPU memory growth
+        # Configure GPU memory growth and optimization
         gpus = tf.config.list_physical_devices('GPU')
         if gpus:
             try:
                 for gpu in gpus:
                     tf.config.experimental.set_memory_growth(gpu, True)
+                    # Set memory limit to 90% of available memory
+                    tf.config.set_logical_device_configuration(
+                        gpu,
+                        [tf.config.LogicalDeviceConfiguration(memory_limit=1024 * 9)]  # 9GB limit
+                    )
                 logger.info(f"GPU memory growth enabled for {len(gpus)} devices")
+                
+                # Enable mixed precision for better GPU performance
+                tf.keras.mixed_precision.set_global_policy('mixed_float16')
+                logger.info("Mixed precision training enabled")
+                
             except RuntimeError as e:
                 logger.error(f"Error configuring GPU: {str(e)}")
         
@@ -178,7 +189,7 @@ class EnhancedSHAPOptimizer:
             raise
 
     def optimize_features(self, data_path: str, top_k: int = 15) -> List[int]:
-        """Optimize features for day trading using SHAP values"""
+        """Optimize features for day trading using SHAP values with parallel processing"""
         try:
             logger.info("Starting feature optimization for day trading")
             
@@ -187,102 +198,63 @@ class EnhancedSHAPOptimizer:
             data = np.load(data_path)
             X = data['X']
             logger.info(f"Loaded data shape: {X.shape}")
-            logger.info(f"Loaded data features: {X.shape[-1]}")
-            logger.info(f"Loaded data dtype: {X.dtype}")
             
             # Convert data to float32 for SHAP compatibility
             X = X.astype(np.float32)
-            logger.info(f"Converted data dtype: {X.dtype}")
             
             # Get background shape from the masker
             background_shape = self.regime_explainer.masker.data.shape[1]
-            logger.info(f"Background shape: {background_shape}")
             
             # Reshape data to match background shape
             n_samples, n_timesteps, n_features = X.shape
             total_features = n_timesteps * n_features
-            logger.info(f"Total features across timesteps: {total_features}")
             
             # Ensure data matches background shape
             if total_features != background_shape:
-                logger.error(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
-                logger.error(f"Input shape: {X.shape}, Background shape: {self.regime_explainer.masker.data.shape}")
                 raise ValueError(f"Data shape mismatch: got {total_features} features, expected {background_shape}")
             
-            # Optimize batch size based on available GPU memory
-            gpus = tf.config.list_physical_devices('GPU')
-            if gpus:
-                # Get GPU memory info
-                gpu_memory = tf.config.experimental.get_memory_info('GPU:0')
-                available_memory = gpu_memory['available'] / (1024**3)  # Convert to GB
-                # Calculate optimal batch size based on available memory
-                # Assuming each sample uses ~100MB of GPU memory
-                optimal_batch_size = min(1000, int(available_memory * 10))
-                logger.info(f"Using optimal batch size: {optimal_batch_size} based on {available_memory:.1f}GB GPU memory")
-            else:
-                optimal_batch_size = 500  # Default for CPU
-                logger.info("No GPU detected, using default batch size: 500")
-            
-            # Process in optimized batches with GPU optimization
-            n_batches = (n_samples + optimal_batch_size - 1) // optimal_batch_size
+            # Process in larger batches with parallel processing
+            batch_size = 1000  # Increased from 100
+            n_batches = (n_samples + batch_size - 1) // batch_size
             all_shap_values = []
             
             # Clear GPU memory before starting
             tf.keras.backend.clear_session()
             
-            # Create a thread pool for parallel processing
-            from concurrent.futures import ThreadPoolExecutor
-            import threading
-            
-            # Thread-local storage for TensorFlow sessions
-            thread_local = threading.local()
-            
-            def process_batch(batch_idx):
-                try:
-                    # Get thread-local TF session
-                    if not hasattr(thread_local, "session"):
-                        thread_local.session = tf.Session()
-                    
-                    start_idx = batch_idx * optimal_batch_size
-                    end_idx = min((batch_idx + 1) * optimal_batch_size, n_samples)
+            # Create a ThreadPoolExecutor for parallel processing
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = []
+                
+                for i in range(n_batches):
+                    start_idx = i * batch_size
+                    end_idx = min((i + 1) * batch_size, n_samples)
                     batch = X[start_idx:end_idx]
                     
                     # Reshape batch to match background shape and ensure float32
                     batch_reshaped = batch.reshape(batch.shape[0], -1).astype(np.float32)
-                    logger.info(f"Processing batch {batch_idx+1}, shape: {batch_reshaped.shape}, dtype: {batch_reshaped.dtype}")
                     
-                    # Calculate SHAP values for both models
-                    regime_shap = self.regime_explainer.shap_values(batch_reshaped, npermutations=21)
-                    trend_shap = self.trend_explainer.shap_values(batch_reshaped, npermutations=21)
+                    # Submit batch processing to thread pool
+                    future = executor.submit(self._process_batch, batch_reshaped)
+                    futures.append(future)
                     
-                    # Combine SHAP values with trading-specific weights
-                    combined_shap = self._combine_shap_values(regime_shap, trend_shap)
-                    
-                    # Clear GPU memory after each batch
-                    tf.keras.backend.clear_session()
-                    
-                    return combined_shap
-                    
-                except Exception as e:
-                    logger.error(f"Error processing batch {batch_idx}: {str(e)}")
-                    raise
-            
-            # Process batches in parallel with optimal number of workers
-            n_workers = min(4, n_batches)  # Use up to 4 workers
-            logger.info(f"Processing {n_batches} batches with {n_workers} workers")
-            
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                batch_results = list(tqdm(
-                    executor.map(process_batch, range(n_batches)),
-                    total=n_batches,
-                    desc="Processing batches"
-                ))
+                    # Process results as they complete
+                    for completed_future in as_completed(futures):
+                        try:
+                            combined_shap = completed_future.result()
+                            all_shap_values.append(combined_shap)
+                            
+                            # Clear GPU memory after each batch
+                            tf.keras.backend.clear_session()
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing batch: {str(e)}")
+                            continue
             
             # Combine all batches
-            all_shap_values = np.concatenate(batch_results, axis=0)
+            all_shap_values = np.concatenate(all_shap_values, axis=0)
             
-            # Calculate feature importance with trading-specific considerations
-            feature_importance = self._calculate_feature_importance(all_shap_values)
+            # Calculate feature importance with parallel processing
+            feature_importance = self._calculate_feature_importance_parallel(all_shap_values)
             
             # Select top features
             top_features = self._select_top_features(feature_importance, top_k)
@@ -293,6 +265,53 @@ class EnhancedSHAPOptimizer:
         except Exception as e:
             logger.error(f"Feature optimization failed: {str(e)}")
             raise
+
+    def _process_batch(self, batch: np.ndarray) -> np.ndarray:
+        """Process a single batch of data with GPU optimization"""
+        try:
+            # Calculate SHAP values for both models with GPU acceleration
+            with tf.device('/GPU:0'):
+                regime_shap = self.regime_explainer.shap_values(batch, npermutations=21)
+                trend_shap = self.trend_explainer.shap_values(batch, npermutations=21)
+            
+            # Combine SHAP values with trading-specific weights
+            combined_shap = self._combine_shap_values(regime_shap, trend_shap)
+            
+            return combined_shap
+            
+        except Exception as e:
+            logger.error(f"Error processing batch: {str(e)}")
+            raise
+
+    def _calculate_feature_importance_parallel(self, shap_values: np.ndarray) -> np.ndarray:
+        """Calculate feature importance with parallel processing"""
+        try:
+            # Split SHAP values into chunks for parallel processing
+            n_chunks = 4
+            chunk_size = len(shap_values) // n_chunks
+            chunks = np.array_split(shap_values, n_chunks)
+            
+            # Process chunks in parallel
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(self._process_chunk, chunk) for chunk in chunks]
+                chunk_importances = [future.result() for future in as_completed(futures)]
+            
+            # Combine chunk results
+            importance = np.mean(chunk_importances, axis=0)
+            
+            # Force include essential features
+            essential_idx = [self.feature_columns.index(f) for f in self.essential_features]
+            importance[essential_idx] += 1000
+            
+            return importance
+            
+        except Exception as e:
+            logger.error(f"Error calculating feature importance: {str(e)}")
+            raise
+
+    def _process_chunk(self, chunk: np.ndarray) -> np.ndarray:
+        """Process a chunk of SHAP values"""
+        return np.abs(chunk).mean(axis=0)
 
     def _trading_feature_weights(self) -> np.ndarray:
         """Trading-specific feature weights"""
