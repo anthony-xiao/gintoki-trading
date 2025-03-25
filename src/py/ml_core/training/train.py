@@ -247,8 +247,7 @@ def main():
                  metadata=feature_metadata)
         
         # Save to S3 with versioning
-        registry = EnhancedModelRegistry()
-        registry.save_enhanced_model('enhanced_feature_mask.npz', 'features')
+        model_factory.save_model_to_s3('enhanced_feature_mask.npz', 'features', args.model_version)
         logger.info(f"✅ Selected features: {feature_metadata['selected_features']}")
 
         # 5. Retrain Transformer with optimized features using ModelFactory
@@ -280,7 +279,23 @@ def main():
         # 6. Train final ensemble using ModelFactory
         logger.info("🚢 Phase 6/6: Training adaptive ensemble...")
         ensemble = model_factory.ensemble
+        
+        # Preprocess data
         processed_data = ensemble.preprocess_data(combined_data)
+        
+        # Train XGBoost model
+        logger.info("Training XGBoost momentum model...")
+        xgb_features = processed_data[ensemble.feature_columns].values
+        xgb_labels = np.where(processed_data['close'].shift(-1) > processed_data['close'], 1, 0)[:-1]
+        ensemble.models['xgb_momentum'].fit(xgb_features[:-1], xgb_labels)
+        
+        # Train Isolation Forest
+        logger.info("Training Isolation Forest...")
+        anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values
+        ensemble.models['isolation_forest'].fit(anomaly_features)
+        
+        # Calculate initial signals
+        logger.info("Calculating initial ensemble signals...")
         signals = ensemble.calculate_signals(processed_data)
         
         # Save all models and ensemble configuration to S3

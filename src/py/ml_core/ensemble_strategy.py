@@ -67,6 +67,34 @@ class AdaptiveEnsembleTrader:
     def calculate_signals(self, processed_data: pd.DataFrame) -> Dict:
         """Generate signals with transformer integration"""
         try:
+            # Validate input data
+            if processed_data is None or processed_data.empty:
+                logger.warning("Empty or None data received in calculate_signals")
+                return {
+                    'signal': 0.0,
+                    'regime': 'neutral',
+                    'confidence': 0.0,
+                    'components': {
+                        'transformer': 0.0,
+                        'xgb': 0.0,
+                        'lstm': 0.0
+                    }
+                }
+            
+            # Ensure we have enough data for sequences
+            if len(processed_data) < self.seq_length:
+                logger.warning(f"Insufficient data for sequences. Need {self.seq_length}, got {len(processed_data)}")
+                return {
+                    'signal': 0.0,
+                    'regime': 'neutral',
+                    'confidence': 0.0,
+                    'components': {
+                        'transformer': 0.0,
+                        'xgb': 0.0,
+                        'lstm': 0.0
+                    }
+                }
+            
             latest_data = processed_data.iloc[-self.seq_length:]
             
             # Initialize default signals
@@ -75,23 +103,35 @@ class AdaptiveEnsembleTrader:
             lstm_signal = 0.0
             transformer_signal = 0.0
             
-            # Get market regime if model exists
+            # Get market regime if model exists and is trained
             if self.models['lstm_volatility'] is not None:
-                regime_probs = self.models['lstm_volatility'].predict(
-                    self._create_sequences(latest_data[self.feature_columns])
-                )
+                try:
+                    sequences = self._create_sequences(latest_data[self.feature_columns])
+                    if len(sequences) > 0:
+                        regime_probs = self.models['lstm_volatility'].predict(sequences, verbose=0)
+                except Exception as e:
+                    logger.warning(f"Error in LSTM volatility prediction: {str(e)}")
             
             current_regime = self._detect_regime(regime_probs[-1])
             
-            # Get component signals if models exist
+            # Get component signals if models exist and are trained
             if self.models['xgb_momentum'] is not None:
-                xgb_signal = self._xgb_momentum_signal(latest_data)
+                try:
+                    xgb_signal = self._xgb_momentum_signal(latest_data)
+                except Exception as e:
+                    logger.warning(f"Error in XGB momentum prediction: {str(e)}")
             
             if self.models['lstm_volatility'] is not None:
-                lstm_signal = self._lstm_volatility_signal(latest_data)
+                try:
+                    lstm_signal = self._lstm_volatility_signal(latest_data)
+                except Exception as e:
+                    logger.warning(f"Error in LSTM signal prediction: {str(e)}")
             
             if self.models['transformer_trend'] is not None:
-                transformer_signal = self._transformer_trend_signal(latest_data)
+                try:
+                    transformer_signal = self._transformer_trend_signal(latest_data)
+                except Exception as e:
+                    logger.warning(f"Error in transformer prediction: {str(e)}")
             
             # Combine signals with regime-based weights
             weights = self.regime_weights[current_regime]
@@ -102,13 +142,20 @@ class AdaptiveEnsembleTrader:
             )
             
             # Apply risk adjustments
-            risk_factor = self._calculate_risk_factor(latest_data)
-            final_signal = combined * risk_factor
+            try:
+                risk_factor = self._calculate_risk_factor(latest_data)
+                final_signal = combined * risk_factor
+            except Exception as e:
+                logger.warning(f"Error in risk calculation: {str(e)}")
+                final_signal = combined
             
             # Anomaly detection if model exists
             if self.models['isolation_forest'] is not None:
-                if self._detect_anomalies(latest_data):
-                    final_signal *= 0.5
+                try:
+                    if self._detect_anomalies(latest_data):
+                        final_signal *= 0.5
+                except Exception as e:
+                    logger.warning(f"Error in anomaly detection: {str(e)}")
 
             return {
                 'signal': np.tanh(final_signal),
@@ -123,7 +170,16 @@ class AdaptiveEnsembleTrader:
             
         except Exception as e:
             logger.error(f"Error in calculate_signals: {str(e)}")
-            raise
+            return {
+                'signal': 0.0,
+                'regime': 'neutral',
+                'confidence': 0.0,
+                'components': {
+                    'transformer': 0.0,
+                    'xgb': 0.0,
+                    'lstm': 0.0
+                }
+            }
 
     def _transformer_trend_signal(self, data: pd.DataFrame) -> float:
         """Get transformer-based trend strength"""
