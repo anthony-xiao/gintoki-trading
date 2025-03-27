@@ -38,51 +38,6 @@ def configure_logging():
 
 logger = configure_logging()
 
-def load_pretrained_models(model_factory, model_version):
-    """Load all necessary pre-trained models and configurations."""
-    logger.info("📦 Loading pre-trained models and configurations...")
-    
-    try:
-        # Load feature mask and metadata using ModelFactory's method
-        feature_mask_path = model_factory._get_s3_key('features', model_version, extension='.npz')
-        feature_mask_data = np.load(model_factory.s3_client.get_object(
-            Bucket=model_factory.bucket,
-            Key=feature_mask_path
-        )['Body'].read())
-        
-        feature_mask = feature_mask_data['mask']
-        feature_metadata = feature_mask_data['metadata'].item()
-        logger.info(f"✅ Loaded feature mask with {len(feature_mask)} features")
-    except Exception as e:
-        logger.error(f"Failed to load feature mask: {str(e)}")
-        raise
-
-    try:
-        # Create model instances first
-        model_factory.create_models()
-        
-        # Load pre-trained weights into the models
-        model_factory.load_models(model_version)
-        
-        # Get the models from the factory
-        volatility_model = model_factory.models['volatility'].model
-        
-        # Load the optimized transformer model specifically
-        optimized_transformer = model_factory.load_model_from_s3('transformer_optimized', model_version)
-        logger.info("✅ Loaded optimized transformer model")
-        
-        logger.info("✅ Loaded all pre-trained models")
-    except Exception as e:
-        logger.error(f"Failed to load models: {str(e)}")
-        raise
-
-    return {
-        'feature_mask': feature_mask,
-        'feature_metadata': feature_metadata,
-        'volatility_model': volatility_model,
-        'transformer_model': optimized_transformer  # Use the optimized transformer
-    }
-
 def main():
     try:
         # Parse command line arguments
@@ -123,37 +78,229 @@ def main():
         combined_data = pd.concat(all_data.values())
         logger.info(f"📊 Total combined data shape: {combined_data.shape}")
 
-        # Load pre-trained models and configurations
-        pretrained_models = load_pretrained_models(model_factory, args.model_version)
+        # Log available models in S3 before loading
+        logger.info("🔍 Checking available models in S3...")
+        
+        # List all models in the directory
+        prefix = f"{model_factory.model_prefix}"
+        response = model_factory.s3_client.list_objects_v2(
+            Bucket=model_factory.bucket,
+            Prefix=prefix
+        )
+        
+        if 'Contents' not in response:
+            logger.warning("No models found in S3 bucket")
+        else:
+            # Group models by type
+            model_types = {}
+            for obj in response['Contents']:
+                key = obj['Key']
+                if not key.endswith('.h5') and not key.endswith('.npz'):
+                    continue
+                    
+                # Extract model type from path
+                parts = key.split('/')
+                if len(parts) >= 3:
+                    model_type = parts[1]  # e.g., 'volatility', 'transformer', etc.
+                    if model_type not in model_types:
+                        model_types[model_type] = []
+                    model_types[model_type].append(key)
+            
+            # Log available models and their latest versions
+            logger.info("📦 Available models in S3:")
+            latest_version = None
+            for model_type, paths in model_types.items():
+                if paths:
+                    # Sort by timestamp in filename to get latest
+                    latest_path = max(paths)
+                    # Extract version from path (e.g., 'v1_20240325_105823' -> 'v1')
+                    version = latest_path.split('/')[-1].split('_')[0]
+                    if latest_version is None:
+                        latest_version = version
+                    logger.info(f"  - {model_type}:")
+                    logger.info(f"    Latest version: s3://{model_factory.bucket}/{latest_path}")
+                    logger.info(f"    Version tag: {version}")
+                    logger.info(f"    Total versions: {len(paths)}")
+                    if len(paths) > 1:
+                        logger.info(f"    All versions:")
+                        for path in sorted(paths, reverse=True)[:5]:  # Show top 5 most recent
+                            logger.info(f"      - s3://{model_factory.bucket}/{path}")
+                        if len(paths) > 5:
+                            logger.info(f"      ... and {len(paths)-5} more versions")
 
-        # Train ensemble
-        logger.info("🚢 Training adaptive ensemble...")
+            # Use the latest version found if no version was specified
+            if args.model_version is None and latest_version is not None:
+                logger.info(f"Using latest version found: {latest_version}")
+                args.model_version = latest_version
+            elif args.model_version is not None:
+                logger.info(f"Using specified version: {args.model_version}")
+
+        # Load pre-trained models and configurations
+        logger.info("📦 Loading pre-trained models and configurations...")
+        
+        # Create model instances first
+        model_factory.create_models()
+        
+        # Load pre-trained weights into the models
+        model_factory.load_models(args.model_version)
+        
+        # Get the models from the factory
+        volatility_model = model_factory.models['volatility'].model
+        
+        # Load the optimized transformer model specifically
+        optimized_transformer = model_factory.load_model_from_s3('transformer_optimized', args.model_version)
+        logger.info("✅ Loaded optimized transformer model")
+        
+        # Load feature mask and metadata
+        feature_mask_path = f"models/features/models/test_v1_20250325_091600.npz"
+        feature_mask_buffer = BytesIO(model_factory.s3_client.get_object(
+            Bucket=model_factory.bucket,
+            Key=feature_mask_path
+        )['Body'].read())
+        feature_mask_data = np.load(feature_mask_buffer, allow_pickle=True)
+        
+        feature_mask = feature_mask_data['mask']
+        feature_metadata = feature_mask_data['metadata'].item()
+        logger.info(f"✅ Loaded feature mask with {len(feature_mask)} features")
+
+        # Train final ensemble using ModelFactory
+        logger.info("🚢 Phase 6/6: Training adaptive ensemble...")
         ensemble = model_factory.ensemble
         
-        # Preprocess data with loaded feature mask
+        # Preprocess data with feature mask and metadata
         processed_data = ensemble.preprocess_data(
             combined_data,
-            feature_mask=pretrained_models['feature_mask'],
-            feature_metadata=pretrained_models['feature_metadata']
+            feature_mask=feature_mask,  # Use the feature mask from SHAP optimization
+            feature_metadata=feature_metadata  # Use the feature metadata from SHAP optimization
         )
         
         # Train XGBoost model
         logger.info("Training XGBoost momentum model...")
-        xgb_features = processed_data[ensemble.feature_columns].values
+        
+        # Log initial data state
+        logger.info(f"Initial combined data shape: {combined_data.shape}")
+        logger.info(f"Initial combined data columns: {combined_data.columns.tolist()}")
+        
+        # Get selected features from metadata and remove duplicates
+        selected_features = list(dict.fromkeys(feature_metadata.get('selected_features', ensemble.feature_columns)))
+        logger.info(f"Using {len(selected_features)} unique features for XGBoost: {selected_features}")
+        
+        # Ensure we have the required features for XGBoost
+        if not all(feature in processed_data.columns for feature in selected_features):
+            missing_features = [f for f in selected_features if f not in processed_data.columns]
+            raise ValueError(f"Missing required features: {missing_features}")
+            
+        # Log data before feature selection
+        logger.info(f"Data shape before feature selection: {processed_data.shape}")
+        logger.info(f"Data columns before feature selection: {processed_data.columns.tolist()}")
+        
+        # Select features and verify data
+        xgb_features = processed_data[selected_features].values
+        if len(xgb_features) == 0:
+            logger.error(f"Processed data shape: {processed_data.shape}")
+            logger.error(f"Selected features: {selected_features}")
+            logger.error(f"Available columns: {processed_data.columns.tolist()}")
+            logger.error("Data sample:")
+            logger.error(processed_data.head())
+            raise ValueError("No valid data available for XGBoost training")
+            
+        # Create labels and ensure they match feature length
         xgb_labels = np.where(processed_data['close'].shift(-1) > processed_data['close'], 1, 0)[:-1]
-        ensemble.models['xgb_momentum'].fit(xgb_features[:-1], xgb_labels)
+        if len(xgb_labels) == 0:
+            raise ValueError("No valid labels available for XGBoost training")
+            
+        # Remove the last row from features to match labels length
+        xgb_features = xgb_features[:-1]
+        
+        # Log shapes for debugging
+        logger.info(f"XGBoost training data shapes - Features: {xgb_features.shape}, Labels: {xgb_labels.shape}")
+        
+        # Verify data quality
+        if np.any(np.isnan(xgb_features)):
+            logger.error("NaN values found in features")
+            raise ValueError("NaN values in features")
+            
+        if np.any(np.isinf(xgb_features)):
+            logger.error("Infinite values found in features")
+            raise ValueError("Infinite values in features")
+        
+        # Train the model
+        logger.info("Starting XGBoost training...")
+        ensemble.models['xgb_momentum'].fit(xgb_features, xgb_labels)
+        
+        # Log XGBoost training results
+        logger.info("XGBoost training completed successfully")
+        logger.info("XGBoost model details:")
+        logger.info(f"  - Number of trees: {len(ensemble.models['xgb_momentum'].get_booster().get_dump())}")
+        logger.info(f"  - Feature importance:")
+        feature_importance = ensemble.models['xgb_momentum'].feature_importances_
+        for feature, importance in zip(selected_features, feature_importance):
+            logger.info(f"    - {feature}: {importance:.4f}")
+        
+        # Train Isolation Forest with required features
+        logger.info("Training Isolation Forest...")
+        # Ensure required features exist
+        required_features = ['returns', 'volume_z', 'spread_ratio']
+        for feature in required_features:
+            if feature not in processed_data.columns:
+                logger.warning(f"Required feature {feature} not found in processed data. Recalculating...")
+                if feature == 'returns':
+                    processed_data['returns'] = np.log(processed_data['close']/processed_data['close'].shift(1))
+                elif feature == 'volume_z':
+                    processed_data['volume_z'] = (processed_data['volume'] - processed_data['volume'].rolling(50).mean()) \
+                                               / processed_data['volume'].rolling(50).std()
+                elif feature == 'spread_ratio':
+                    processed_data['spread_ratio'] = processed_data['bid_ask_spread'] / processed_data['mid_price']
+        
+        # Handle NaN values for Isolation Forest
+        anomaly_features = processed_data[required_features].copy()
+        
+        # Log NaN values before handling
+        nan_counts = anomaly_features.isna().sum()
+        if nan_counts.any():
+            logger.info("NaN values in anomaly features before handling:")
+            for col, count in nan_counts.items():
+                if count > 0:
+                    logger.info(f"  {col}: {count} NaN values")
+        
+        # Handle NaN values
+        for col in required_features:
+            if anomaly_features[col].isna().any():
+                # For derived features, use forward fill
+                if col in ['returns', 'volume_z', 'spread_ratio']:
+                    anomaly_features[col] = anomaly_features[col].ffill()
+                else:
+                    # For other features, use median
+                    anomaly_features[col] = anomaly_features[col].fillna(anomaly_features[col].median())
+        
+        # Verify no NaN values remain
+        if anomaly_features.isna().any().any():
+            raise ValueError("NaN values still present in anomaly features after handling")
+        
+        if len(anomaly_features) == 0:
+            raise ValueError("No valid data available for Isolation Forest training")
+            
+        # Log final data shape and statistics
+        logger.info(f"Isolation Forest training data shape: {anomaly_features.shape}")
+        logger.info("Feature statistics:")
+        for col in required_features:
+            stats = anomaly_features[col].describe()
+            logger.info(f"  {col}:")
+            logger.info(f"    - Mean: {stats['mean']:.4f}")
+            logger.info(f"    - Std: {stats['std']:.4f}")
+            logger.info(f"    - Min: {stats['min']:.4f}")
+            logger.info(f"    - Max: {stats['max']:.4f}")
         
         # Train Isolation Forest
-        logger.info("Training Isolation Forest...")
-        anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values
-        ensemble.models['isolation_forest'].fit(anomaly_features)
+        ensemble.models['isolation_forest'].fit(anomaly_features.values)
+        logger.info("Isolation Forest training completed successfully")
         
-        # Calculate initial signals using loaded models
+        # Calculate initial signals using optimized transformer
         logger.info("Calculating initial ensemble signals...")
         signals = ensemble.calculate_signals(
             processed_data,
-            volatility_model=pretrained_models['volatility_model'],
-            transformer_model=pretrained_models['transformer_model']  # Using optimized transformer
+            volatility_model=model_factory.models['volatility'].model,
+            transformer_model=model_factory.models['transformer_optimized'].model  # Use optimized transformer
         )
         
         # Analyze and log signal performance
@@ -221,7 +368,7 @@ def main():
             'timestamp': time.strftime('%Y%m%d_%H%M%S'),
             'config': model_config,
             'signal_analysis': signal_analysis,
-            'feature_metadata': pretrained_models['feature_metadata']
+            'feature_metadata': feature_metadata  # Include feature metadata in the output
         }
         
         # Save metadata to S3

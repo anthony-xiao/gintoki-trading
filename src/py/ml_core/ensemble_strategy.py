@@ -32,6 +32,7 @@ class AdaptiveEnsembleTrader:
                     'lstm_volatility': load_model(config['volatility_model_path']),
                     'xgb_momentum': XGBClassifier(),
                     'transformer_trend': load_model(config['transformer_model_path']),
+                    'transformer_optimized': load_model(config.get('transformer_optimized_model_path', config['transformer_model_path'])),
                     'isolation_forest': IsolationForest(contamination=0.05)
                 }
             else:
@@ -42,6 +43,7 @@ class AdaptiveEnsembleTrader:
                 'lstm_volatility': None,
                 'xgb_momentum': XGBClassifier(),
                 'transformer_trend': None,
+                'transformer_optimized': None,
                 'isolation_forest': IsolationForest(contamination=0.05)
             }
 
@@ -53,18 +55,137 @@ class AdaptiveEnsembleTrader:
             else:
                 raise ValueError(f"Unknown model name: {name}")
 
-    def preprocess_data(self, raw_data: pd.DataFrame) -> pd.DataFrame:
-        """Enhance data with derived features (unchanged from original)"""
+    def preprocess_data(self, raw_data: pd.DataFrame, feature_mask: np.ndarray = None, feature_metadata: Dict = None) -> pd.DataFrame:
+        """Enhance data with derived features and optional feature masking"""
         processed = raw_data.copy()
-        processed['returns'] = np.log(processed['close']/processed['close'].shift(1))
-        processed['volatility'] = processed['returns'].rolling(20).std()
+        
+        # Log initial data shape and columns
+        logger.info(f"Initial data shape: {processed.shape}")
+        logger.info(f"Initial columns: {processed.columns.tolist()}")
+        
+        # Add derived features first with better NaN handling
+        # Calculate returns with forward fill for NaN values
+        processed['returns'] = processed['close'].pct_change()  # Use pct_change instead of log returns for better stability
+        processed['returns'] = processed['returns'].ffill()
+        
+        # Calculate volatility with forward fill
+        processed['volatility'] = processed['returns'].rolling(20, min_periods=1).std()
+        processed['volatility'] = processed['volatility'].ffill()
+        
+        # Calculate true range with forward fill
         processed['true_range'] = self._true_range(processed)
-        processed['volume_z'] = (processed['volume'] - processed['volume'].rolling(50).mean()) \
-                               / processed['volume'].rolling(50).std()
+        processed['true_range'] = processed['true_range'].ffill()
+        
+        # Calculate volume_z with improved normalization
+        # First, calculate rolling statistics with a minimum number of periods
+        volume_ma = processed['volume'].rolling(50, min_periods=1).mean()
+        volume_std = processed['volume'].rolling(50, min_periods=1).std()
+        
+        # Add a small constant to avoid division by zero, but make it relative to the mean
+        epsilon = volume_ma * 1e-6  # Scale epsilon with the mean volume
+        processed['volume_z'] = (processed['volume'] - volume_ma) / (volume_std + epsilon)
+        
+        # Clip extreme values to prevent outliers
+        processed['volume_z'] = processed['volume_z'].clip(-5, 5)
+        
+        # Forward fill any remaining NaN values
+        processed['volume_z'] = processed['volume_z'].ffill()
+        
+        # Calculate spread ratio with forward fill
         processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']
-        return processed.dropna()
+        processed['spread_ratio'] = processed['spread_ratio'].ffill()
+        
+        # Log shape after adding derived features
+        logger.info(f"Data shape after adding derived features: {processed.shape}")
+        
+        # Log statistics of derived features
+        logger.info("Derived feature statistics:")
+        for feature in ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']:
+            stats = processed[feature].describe()
+            logger.info(f"  {feature}:")
+            logger.info(f"    - Mean: {stats['mean']:.4f}")
+            logger.info(f"    - Std: {stats['std']:.4f}")
+            logger.info(f"    - Min: {stats['min']:.4f}")
+            logger.info(f"    - Max: {stats['max']:.4f}")
+            logger.info(f"    - NaN count: {processed[feature].isna().sum()}")
+            # Log a sample of values to verify they're not all zeros
+            logger.info(f"    - Sample values: {processed[feature].head().tolist()}")
+        
+        # Apply feature mask if provided
+        if feature_mask is not None and feature_metadata is not None:
+            selected_features = feature_metadata.get('selected_features', self.feature_columns)
+            # Ensure all required derived features are included
+            derived_features = ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']
+            selected_features = list(set(selected_features + derived_features))
+            
+            # Log feature selection
+            logger.info(f"Selected features: {selected_features}")
+            logger.info(f"Available columns: {processed.columns.tolist()}")
+            
+            # Verify all selected features exist
+            missing_features = [f for f in selected_features if f not in processed.columns]
+            if missing_features:
+                raise ValueError(f"Missing required features: {missing_features}")
+            
+            processed = processed[selected_features]
+            
+            # Log shape after feature selection
+            logger.info(f"Data shape after feature selection: {processed.shape}")
+        
+        # Handle NaN values more carefully
+        # First, identify which columns have NaN values and how many
+        nan_counts = processed.isna().sum()
+        nan_cols = nan_counts[nan_counts > 0].index.tolist()
+        
+        if nan_cols:
+            logger.info("NaN value counts by column:")
+            for col in nan_cols:
+                count = nan_counts[col]
+                percentage = (count / len(processed)) * 100
+                logger.info(f"  {col}: {count} NaN values ({percentage:.2f}%)")
+            
+            # For derived features, we expect some NaN values at the start
+            # For other features, we should investigate
+            for col in nan_cols:
+                if col not in derived_features:
+                    logger.warning(f"Unexpected NaN values in column: {col}")
+            
+            # Handle NaN values with a more robust approach
+            for col in nan_cols:
+                if col in derived_features:
+                    # For derived features, use forward fill then backward fill
+                    processed[col] = processed[col].ffill().bfill()
+                else:
+                    # For other features, use median imputation
+                    processed[col] = processed[col].fillna(processed[col].median())
+            
+            # Log shape after handling NaN values
+            logger.info(f"Data shape after handling NaN values: {processed.shape}")
+            
+            # Verify no NaN values remain
+            if processed.isna().any().any():
+                remaining_nans = processed.isna().sum()
+                logger.warning("Some NaN values remain after handling:")
+                for col, count in remaining_nans.items():
+                    if count > 0:
+                        logger.warning(f"  {col}: {count} NaN values")
+                        # Try one final time to handle any remaining NaNs
+                        if col in derived_features:
+                            processed[col] = processed[col].ffill().bfill()
+                        else:
+                            processed[col] = processed[col].fillna(processed[col].median())
+            
+            # Final verification
+            if processed.isna().any().any():
+                raise ValueError("Unable to handle all NaN values")
+        
+        # Verify we still have data
+        if len(processed) == 0:
+            raise ValueError("No valid data remains after preprocessing")
+        
+        return processed
 
-    def calculate_signals(self, processed_data: pd.DataFrame) -> Dict:
+    def calculate_signals(self, processed_data: pd.DataFrame, volatility_model: tf.keras.Model = None, transformer_model: tf.keras.Model = None) -> Dict:
         """Generate signals with enhanced market context and model integration"""
         try:
             # Validate input data
@@ -77,98 +198,117 @@ class AdaptiveEnsembleTrader:
                 logger.warning(f"Insufficient data for sequences. Need {self.seq_length}, got {len(processed_data)}")
                 return self._get_default_signals()
             
-            latest_data = processed_data.iloc[-self.seq_length:]
+            # Create sequences for the entire dataset
+            sequences = self._create_sequences(processed_data[self.feature_columns])
+            if len(sequences) == 0:
+                logger.warning("No valid sequences created")
+                return self._get_default_signals()
             
-            # Get market regime
+            # Get market regime for each sequence
             regime_probs = np.array([0.33, 0.33, 0.34])  # Default to neutral regime
-            if self.models['lstm_volatility'] is not None:
+            if volatility_model is not None:
                 try:
-                    sequences = self._create_sequences(latest_data[self.feature_columns])
-                    if len(sequences) > 0:
-                        regime_probs = self.models['lstm_volatility'].predict(sequences, verbose=0)
+                    regime_probs = volatility_model.predict(sequences, verbose=0)
                 except Exception as e:
-                    logger.warning(f"Error in LSTM volatility prediction: {str(e)}")
+                    logger.warning(f"Error in volatility prediction: {str(e)}")
             
-            current_regime = self._detect_regime(regime_probs[-1])
-            
-            # Get component signals with confidence scores
+            # Get component signals with confidence scores for each sequence
             component_signals = {}
+            
+            # XGB signals
             if self.models['xgb_momentum'] is not None:
                 try:
-                    xgb_signal, xgb_conf = self._xgb_momentum_signal(latest_data)
-                    component_signals['xgb'] = {'signal': xgb_signal, 'confidence': xgb_conf}
+                    features = processed_data[self.feature_columns].values
+                    xgb_probs = self.models['xgb_momentum'].predict_proba(features)
+                    xgb_signals = xgb_probs[:, -1]
+                    component_signals['xgb'] = {
+                        'signal': xgb_signals,
+                        'confidence': np.ones_like(xgb_signals)
+                    }
                 except Exception as e:
                     logger.warning(f"Error in XGB momentum prediction: {str(e)}")
-                    component_signals['xgb'] = {'signal': 0.0, 'confidence': 0.0}
+                    component_signals['xgb'] = {'signal': np.zeros(len(sequences)), 'confidence': np.zeros(len(sequences))}
             
-            if self.models['lstm_volatility'] is not None:
+            # LSTM signals
+            if volatility_model is not None:
                 try:
-                    lstm_signal, lstm_conf = self._lstm_volatility_signal(latest_data)
-                    component_signals['lstm'] = {'signal': lstm_signal, 'confidence': lstm_conf}
+                    lstm_signals = volatility_model.predict(sequences, verbose=0)
+                    component_signals['lstm'] = {
+                        'signal': lstm_signals.flatten(),
+                        'confidence': np.ones_like(lstm_signals.flatten())
+                    }
                 except Exception as e:
                     logger.warning(f"Error in LSTM signal prediction: {str(e)}")
-                    component_signals['lstm'] = {'signal': 0.0, 'confidence': 0.0}
+                    component_signals['lstm'] = {'signal': np.zeros(len(sequences)), 'confidence': np.zeros(len(sequences))}
             
-            if self.models['transformer_trend'] is not None:
+            # Transformer signals
+            if transformer_model is not None:
                 try:
-                    transformer_signal, transformer_conf = self._transformer_trend_signal(latest_data)
-                    component_signals['transformer'] = {'signal': transformer_signal, 'confidence': transformer_conf}
+                    transformer_signals = transformer_model.predict(sequences, verbose=0)
+                    component_signals['transformer'] = {
+                        'signal': transformer_signals.flatten(),
+                        'confidence': np.ones_like(transformer_signals.flatten())
+                    }
                 except Exception as e:
                     logger.warning(f"Error in transformer prediction: {str(e)}")
-                    component_signals['transformer'] = {'signal': 0.0, 'confidence': 0.0}
+                    component_signals['transformer'] = {'signal': np.zeros(len(sequences)), 'confidence': np.zeros(len(sequences))}
             
-            # Calculate market context factors
-            market_context = self._calculate_market_context(latest_data)
+            # Calculate market context factors for each sequence
+            market_contexts = []
+            for i in range(len(sequences)):
+                data_window = processed_data.iloc[i:i+self.seq_length]
+                market_contexts.append(self._calculate_market_context(data_window))
             
             # Combine signals with regime-based weights and confidence
-            weights = self.regime_weights[current_regime]
-            combined = 0.0
-            total_weight = 0.0
+            combined_signals = np.zeros(len(sequences))
+            total_weights = np.zeros(len(sequences))
             
-            for model, weight in weights.items():
-                if model in component_signals:
-                    signal = component_signals[model]['signal']
-                    confidence = component_signals[model]['confidence']
-                    # Apply confidence-based weighting
-                    adjusted_weight = weight * confidence
-                    combined += signal * adjusted_weight
-                    total_weight += adjusted_weight
+            for i in range(len(sequences)):
+                current_regime = self._detect_regime(regime_probs[i])
+                weights = self.regime_weights[current_regime]
+                
+                for model, weight in weights.items():
+                    if model in component_signals:
+                        signal = component_signals[model]['signal'][i]
+                        confidence = component_signals[model]['confidence'][i]
+                        adjusted_weight = weight * confidence
+                        combined_signals[i] += signal * adjusted_weight
+                        total_weights[i] += adjusted_weight
             
-            # Normalize combined signal
-            if total_weight > 0:
-                combined /= total_weight
+            # Normalize combined signals
+            valid_weights = total_weights > 0
+            combined_signals[valid_weights] /= total_weights[valid_weights]
             
             # Apply market context adjustments
-            combined *= market_context['trend_factor'] * market_context['liquidity_factor']
+            for i in range(len(sequences)):
+                combined_signals[i] *= market_contexts[i]['trend_factor'] * market_contexts[i]['liquidity_factor']
             
             # Apply risk adjustments
-            try:
-                risk_factor = self._calculate_risk_factor(latest_data)
-                final_signal = combined * risk_factor
-            except Exception as e:
-                logger.warning(f"Error in risk calculation: {str(e)}")
-                final_signal = combined
+            risk_factors = np.array([self._calculate_risk_factor(processed_data.iloc[i:i+self.seq_length]) 
+                                   for i in range(len(sequences))])
+            combined_signals *= risk_factors
             
             # Anomaly detection
             if self.models['isolation_forest'] is not None:
                 try:
-                    if self._detect_anomalies(latest_data):
-                        final_signal *= 0.5
+                    anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values
+                    anomalies = self.models['isolation_forest'].predict(anomaly_features) == -1
+                    combined_signals[anomalies] *= 0.5
                 except Exception as e:
                     logger.warning(f"Error in anomaly detection: {str(e)}")
 
             # Calculate overall confidence
-            overall_confidence = np.mean([comp['confidence'] for comp in component_signals.values()])
+            overall_confidence = np.mean([comp['confidence'] for comp in component_signals.values()], axis=0)
             
             return {
-                'signal': np.tanh(final_signal),
-                'regime': current_regime,
+                'signal': np.tanh(combined_signals),
+                'regime': [self._detect_regime(probs) for probs in regime_probs],
                 'confidence': overall_confidence,
                 'components': {
                     model: comp['signal'] 
                     for model, comp in component_signals.items()
                 },
-                'market_context': market_context
+                'market_context': market_contexts
             }
             
         except Exception as e:
@@ -260,10 +400,14 @@ class AdaptiveEnsembleTrader:
         except Exception as e:
             logger.error(f"Error updating model weights: {str(e)}")
 
-    def _transformer_trend_signal(self, data: pd.DataFrame) -> Tuple[float, float]:
+    def _transformer_trend_signal(self, data: pd.DataFrame, transformer_model: tf.keras.Model = None) -> Tuple[float, float]:
         """Get transformer-based trend strength"""
         sequences = self._create_sequences(data[self.feature_columns])
-        return float(self.models['transformer_trend'].predict(sequences)[-1][0]), 1.0
+        if transformer_model is not None:
+            return float(transformer_model.predict(sequences)[-1][0]), 1.0
+        elif self.models['transformer_trend'] is not None:
+            return float(self.models['transformer_trend'].predict(sequences)[-1][0]), 1.0
+        return 0.0, 0.0
 
     def _xgb_momentum_signal(self, data: pd.DataFrame) -> Tuple[float, float]:
         """Existing XGBoost momentum signal (unchanged)"""

@@ -16,6 +16,33 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+class CastLayer(tf.keras.layers.Layer):
+    """Custom layer for type casting"""
+    def __init__(self, dtype=tf.float32, **kwargs):
+        super(CastLayer, self).__init__(**kwargs)
+        self._dtype = dtype
+
+    def call(self, inputs):
+        return tf.cast(inputs, self._dtype)
+
+    def get_config(self):
+        config = super(CastLayer, self).get_config()
+        config.update({'dtype': tf.keras.backend.standardize_dtype(self._dtype)})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        dtype = config.pop('dtype', tf.float32)
+        return cls(dtype=dtype, **config)
+
+    @property
+    def dtype(self):
+        return self._dtype
+
+    @dtype.setter
+    def dtype(self, value):
+        self._dtype = value
+
 class ModelFactory:
     def __init__(self, config: Dict):
         """Initialize the model factory with configuration"""
@@ -91,15 +118,56 @@ class ModelFactory:
             else:
                 latest_model = max(model_files)  # Latest by timestamp
             
-            # Download and load the latest model
+            # Download model to memory
             model_buffer = BytesIO()
             self.s3_client.download_fileobj(self.bucket, latest_model, model_buffer)
             model_buffer.seek(0)
             
-            # Load complete model from buffer
-            model = tf.keras.models.load_model(model_buffer)
-            logger.info(f"Loaded {model_name} model from s3://{self.bucket}/{latest_model}")
-            return model
+            # Create a temporary file with .h5 extension
+            with tempfile.NamedTemporaryFile(suffix='.h5', delete=False) as temp_file:
+                # Write the model data to the temporary file
+                temp_file.write(model_buffer.getvalue())
+                temp_file.flush()  # Ensure all data is written
+                temp_path = temp_file.name
+            
+            try:
+                # Define custom objects for model loading
+                custom_objects = {
+                    'Cast': CastLayer,  # Use our custom CastLayer
+                    'CastLayer': CastLayer,  # Also register the class name
+                    'Dense': tf.keras.layers.Dense,
+                    'Dropout': tf.keras.layers.Dropout,
+                    'LayerNormalization': tf.keras.layers.LayerNormalization,
+                    'MultiHeadAttention': tf.keras.layers.MultiHeadAttention,
+                    'HuberLoss': tf.keras.losses.Huber,
+                    'Adam': tf.keras.optimizers.Adam,
+                    'GRU': tf.keras.layers.GRU,
+                    'LSTM': tf.keras.layers.LSTM,
+                    'Bidirectional': tf.keras.layers.Bidirectional,
+                    'Conv1D': tf.keras.layers.Conv1D,
+                    'MaxPooling1D': tf.keras.layers.MaxPooling1D,
+                    'GlobalAveragePooling1D': tf.keras.layers.GlobalAveragePooling1D,
+                    'BatchNormalization': tf.keras.layers.BatchNormalization,
+                    'Activation': tf.keras.layers.Activation,
+                    'Add': tf.keras.layers.Add,
+                    'Concatenate': tf.keras.layers.Concatenate,
+                    'Flatten': tf.keras.layers.Flatten,
+                    'Reshape': tf.keras.layers.Reshape,
+                    'Embedding': tf.keras.layers.Embedding,
+                    'TimeDistributed': tf.keras.layers.TimeDistributed,
+                    'Lambda': tf.keras.layers.Lambda
+                }
+                
+                # Load model from temporary file with custom objects
+                model = tf.keras.models.load_model(temp_path, custom_objects=custom_objects)
+                logger.info(f"Loaded {model_name} model from s3://{self.bucket}/{latest_model}")
+                return model
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_path)
+                except Exception as e:
+                    logger.warning(f"Error cleaning up temporary file: {str(e)}")
             
         except Exception as e:
             logger.error(f"Failed to load model from S3: {str(e)}")
@@ -193,7 +261,15 @@ class ModelFactory:
                 num_heads=self.config.get('num_heads', 8)
             )
             
-            # 3. Create Adaptive Ensemble with minimal config
+            # 3. Create Optimized Transformer
+            logger.info(f"Creating Optimized Transformer with sequence length {seq_length}...")
+            self.models['transformer_optimized'] = TransformerTrendAnalyzer(
+                seq_length=seq_length,
+                d_model=self.config.get('d_model', 64),
+                num_heads=self.config.get('num_heads', 8)
+            )
+            
+            # 4. Create Adaptive Ensemble with minimal config
             logger.info("Creating Adaptive Ensemble...")
             ensemble_config = {
                 'feature_columns': self.data_loader.feature_columns,
@@ -215,7 +291,8 @@ class ModelFactory:
             if hasattr(self.ensemble, 'set_models'):
                 self.ensemble.set_models({
                     'lstm_volatility': self.models['volatility'].model,
-                    'transformer_trend': self.models['transformer'].model
+                    'transformer_trend': self.models['transformer'].model,
+                    'transformer_optimized': self.models['transformer_optimized'].model
                 })
             
             logger.info("✅ All models created successfully")
@@ -242,6 +319,7 @@ class ModelFactory:
                     'feature_columns': self.data_loader.feature_columns,
                     'volatility_model_path': model_paths.get('volatility'),
                     'transformer_model_path': model_paths.get('transformer'),
+                    'transformer_optimized_model_path': model_paths.get('transformer_optimized'),
                     'risk_management': self.config.get('risk_management'),
                     'regime_weights': self.config.get('regime_weights')
                 }
@@ -258,16 +336,39 @@ class ModelFactory:
         """Load pre-trained models from S3"""
         try:
             # Load individual models
-            for model_name in ['volatility', 'transformer']:
+            for model_name in ['volatility', 'transformer', 'transformer_optimized']:
                 if model_name in self.models:
                     self.models[model_name].model = self.load_model_from_s3(model_name, version)
             
-            # Load ensemble configuration
-            ensemble_config = self.load_ensemble_config_from_s3(version)
+            # Try to load ensemble configuration, but don't fail if it doesn't exist
+            try:
+                ensemble_config = self.load_ensemble_config_from_s3(version)
+            except FileNotFoundError:
+                logger.warning("No ensemble config found, using default configuration")
+                # Create default ensemble config
+                ensemble_config = {
+                    'feature_columns': self.data_loader.feature_columns,
+                    'risk_management': self.config.get('risk_management', {
+                        'max_vol': 0.015,
+                        'max_spread': 0.002
+                    }),
+                    'regime_weights': self.config.get('regime_weights', {
+                        'high_volatility': {'transformer': 0.6, 'xgb': 0.3, 'lstm': 0.1},
+                        'low_volatility': {'transformer': 0.3, 'xgb': 0.5, 'lstm': 0.2},
+                        'neutral': {'transformer': 0.4, 'xgb': 0.4, 'lstm': 0.2}
+                    })
+                }
             
-            # Update ensemble with loaded configuration
-            if self.ensemble:
-                self.ensemble.update_config(ensemble_config)
+            # Create new ensemble instance with the config
+            self.ensemble = AdaptiveEnsembleTrader(ensemble_config, skip_model_loading=True)
+            
+            # Set the models in the ensemble
+            if hasattr(self.ensemble, 'set_models'):
+                self.ensemble.set_models({
+                    'lstm_volatility': self.models['volatility'].model,
+                    'transformer_trend': self.models['transformer'].model,
+                    'transformer_optimized': self.models['transformer_optimized'].model
+                })
             
             logger.info("✅ All models loaded successfully from S3")
             

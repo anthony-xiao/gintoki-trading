@@ -252,7 +252,7 @@ def main():
 
         # 5. Retrain Transformer with optimized features using ModelFactory
         logger.info("🧠 Phase 5/6: Retraining Transformer with optimized features...")
-        optimized_transformer = model_factory.models['transformer']
+        optimized_transformer = model_factory.models['transformer_optimized']
         
         # Use the optimized train_ds for training
         optimized_transformer.model.fit(
