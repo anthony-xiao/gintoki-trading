@@ -7,6 +7,7 @@ from xgboost import XGBClassifier
 from sklearn.ensemble import IsolationForest
 from tensorflow.keras.models import load_model
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -204,25 +205,38 @@ class AdaptiveEnsembleTrader:
                 logger.warning("No valid sequences created")
                 return self._get_default_signals()
             
+            # Convert sequences to TensorFlow tensors for GPU acceleration
+            sequences_tensor = tf.convert_to_tensor(sequences, dtype=tf.float32)
+            
             # Get market regime for each sequence
             regime_probs = np.array([0.33, 0.33, 0.34])  # Default to neutral regime
             if volatility_model is not None:
                 try:
-                    # Process sequences in batches to avoid memory issues
-                    batch_size = 32
+                    # Use TensorFlow's built-in batching and GPU acceleration
+                    batch_size = 128  # Increased batch size for better GPU utilization
+                    dataset = tf.data.Dataset.from_tensor_slices(sequences_tensor) \
+                        .batch(batch_size) \
+                        .prefetch(tf.data.AUTOTUNE)
+                    
+                    # Use model.predict with optimized settings
                     regime_probs_list = []
-                    for i in range(0, len(sequences), batch_size):
-                        batch = sequences[i:i+batch_size]
-                        batch_probs = volatility_model.predict(batch, verbose=0)
+                    for batch in dataset:
+                        batch_probs = volatility_model.predict(
+                            batch,
+                            verbose=0,
+                            use_multiprocessing=True,
+                            workers=4
+                        )
                         regime_probs_list.append(batch_probs)
                     regime_probs = np.concatenate(regime_probs_list)
                 except Exception as e:
                     logger.warning(f"Error in volatility prediction: {str(e)}")
+                    regime_probs = np.tile([0.33, 0.33, 0.34], (len(sequences), 1))
             
             # Get component signals with confidence scores for each sequence
             component_signals = {}
             
-            # XGB signals
+            # XGB signals (CPU-based, no need for GPU optimization)
             if self.models['xgb_momentum'] is not None:
                 try:
                     features = processed_data[self.feature_columns].values
@@ -239,12 +253,15 @@ class AdaptiveEnsembleTrader:
             # LSTM signals
             if volatility_model is not None:
                 try:
-                    # Process sequences in batches
-                    batch_size = 32
+                    # Use the same optimized dataset pipeline
                     lstm_signals_list = []
-                    for i in range(0, len(sequences), batch_size):
-                        batch = sequences[i:i+batch_size]
-                        batch_signals = volatility_model.predict(batch, verbose=0)
+                    for batch in dataset:
+                        batch_signals = volatility_model.predict(
+                            batch,
+                            verbose=0,
+                            use_multiprocessing=True,
+                            workers=4
+                        )
                         lstm_signals_list.append(batch_signals)
                     lstm_signals = np.concatenate(lstm_signals_list)
                     component_signals['lstm'] = {
@@ -258,12 +275,15 @@ class AdaptiveEnsembleTrader:
             # Transformer signals
             if transformer_model is not None:
                 try:
-                    # Process sequences in batches
-                    batch_size = 32
+                    # Use the same optimized dataset pipeline
                     transformer_signals_list = []
-                    for i in range(0, len(sequences), batch_size):
-                        batch = sequences[i:i+batch_size]
-                        batch_signals = transformer_model.predict(batch, verbose=0)
+                    for batch in dataset:
+                        batch_signals = transformer_model.predict(
+                            batch,
+                            verbose=0,
+                            use_multiprocessing=True,
+                            workers=4
+                        )
                         transformer_signals_list.append(batch_signals)
                     transformer_signals = np.concatenate(transformer_signals_list)
                     component_signals['transformer'] = {
@@ -275,10 +295,14 @@ class AdaptiveEnsembleTrader:
                     component_signals['transformer'] = {'signal': np.zeros(len(sequences)), 'confidence': np.zeros(len(sequences))}
             
             # Calculate market context factors for each sequence
+            # Use parallel processing for market context calculation
             market_contexts = []
-            for i in range(len(sequences)):
-                data_window = processed_data.iloc[i:i+self.seq_length]
-                market_contexts.append(self._calculate_market_context(data_window))
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [
+                    executor.submit(self._calculate_market_context, processed_data.iloc[i:i+self.seq_length])
+                    for i in range(len(sequences))
+                ]
+                market_contexts = [future.result() for future in futures]
             
             # Combine signals with regime-based weights and confidence
             combined_signals = np.zeros(len(sequences))
@@ -304,15 +328,22 @@ class AdaptiveEnsembleTrader:
             for i in range(len(sequences)):
                 combined_signals[i] *= market_contexts[i]['trend_factor'] * market_contexts[i]['liquidity_factor']
             
-            # Apply risk adjustments
-            risk_factors = np.array([self._calculate_risk_factor(processed_data.iloc[i:i+self.seq_length]) 
-                                   for i in range(len(sequences))])
+            # Apply risk adjustments in parallel
+            risk_factors = np.zeros(len(sequences))
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [
+                    executor.submit(self._calculate_risk_factor, processed_data.iloc[i:i+self.seq_length])
+                    for i in range(len(sequences))
+                ]
+                risk_factors = np.array([future.result() for future in futures])
+            
             combined_signals *= risk_factors
             
             # Anomaly detection
             if self.models['isolation_forest'] is not None:
                 try:
-                    anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values
+                    # Ensure anomaly features match the sequence length
+                    anomaly_features = processed_data[['returns', 'volume_z', 'spread_ratio']].values[:len(sequences)]
                     anomalies = self.models['isolation_forest'].predict(anomaly_features) == -1
                     combined_signals[anomalies] *= 0.5
                 except Exception as e:
@@ -321,12 +352,13 @@ class AdaptiveEnsembleTrader:
             # Calculate overall confidence
             overall_confidence = np.mean([comp['confidence'] for comp in component_signals.values()], axis=0)
             
+            # Ensure all outputs are arrays
             return {
-                'signal': np.tanh(combined_signals),
-                'regime': [self._detect_regime(probs) for probs in regime_probs],
-                'confidence': overall_confidence,
+                'signal': np.array(combined_signals),
+                'regime': np.array([self._detect_regime(probs) for probs in regime_probs]),
+                'confidence': np.array(overall_confidence),
                 'components': {
-                    model: comp['signal'] 
+                    model: np.array(comp['signal']) 
                     for model, comp in component_signals.items()
                 },
                 'market_context': market_contexts
@@ -334,7 +366,21 @@ class AdaptiveEnsembleTrader:
             
         except Exception as e:
             logger.error(f"Error in calculate_signals: {str(e)}")
-            return self._get_default_signals()
+            # Return default signals as arrays
+            return {
+                'signal': np.array([0.0]),
+                'regime': np.array(['neutral']),
+                'confidence': np.array([0.0]),
+                'components': {
+                    'transformer': np.array([0.0]),
+                    'xgb': np.array([0.0]),
+                    'lstm': np.array([0.0])
+                },
+                'market_context': [{
+                    'trend_factor': 1.0,
+                    'liquidity_factor': 1.0
+                }]
+            }
 
     def _get_default_signals(self) -> Dict:
         """Return default signals when errors occur"""
