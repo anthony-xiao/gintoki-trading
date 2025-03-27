@@ -208,7 +208,14 @@ class AdaptiveEnsembleTrader:
             regime_probs = np.array([0.33, 0.33, 0.34])  # Default to neutral regime
             if volatility_model is not None:
                 try:
-                    regime_probs = volatility_model.predict(sequences, verbose=0)
+                    # Process sequences in batches to avoid memory issues
+                    batch_size = 32
+                    regime_probs_list = []
+                    for i in range(0, len(sequences), batch_size):
+                        batch = sequences[i:i+batch_size]
+                        batch_probs = volatility_model.predict(batch, verbose=0)
+                        regime_probs_list.append(batch_probs)
+                    regime_probs = np.concatenate(regime_probs_list)
                 except Exception as e:
                     logger.warning(f"Error in volatility prediction: {str(e)}")
             
@@ -232,7 +239,14 @@ class AdaptiveEnsembleTrader:
             # LSTM signals
             if volatility_model is not None:
                 try:
-                    lstm_signals = volatility_model.predict(sequences, verbose=0)
+                    # Process sequences in batches
+                    batch_size = 32
+                    lstm_signals_list = []
+                    for i in range(0, len(sequences), batch_size):
+                        batch = sequences[i:i+batch_size]
+                        batch_signals = volatility_model.predict(batch, verbose=0)
+                        lstm_signals_list.append(batch_signals)
+                    lstm_signals = np.concatenate(lstm_signals_list)
                     component_signals['lstm'] = {
                         'signal': lstm_signals.flatten(),
                         'confidence': np.ones_like(lstm_signals.flatten())
@@ -244,7 +258,14 @@ class AdaptiveEnsembleTrader:
             # Transformer signals
             if transformer_model is not None:
                 try:
-                    transformer_signals = transformer_model.predict(sequences, verbose=0)
+                    # Process sequences in batches
+                    batch_size = 32
+                    transformer_signals_list = []
+                    for i in range(0, len(sequences), batch_size):
+                        batch = sequences[i:i+batch_size]
+                        batch_signals = transformer_model.predict(batch, verbose=0)
+                        transformer_signals_list.append(batch_signals)
+                    transformer_signals = np.concatenate(transformer_signals_list)
                     component_signals['transformer'] = {
                         'signal': transformer_signals.flatten(),
                         'confidence': np.ones_like(transformer_signals.flatten())
@@ -466,19 +487,24 @@ class AdaptiveEnsembleTrader:
             # Calculate volume-based liquidity factor
             volume_ma = data['volume'].rolling(20).mean().iloc[-1]
             volume_std = data['volume'].rolling(20).std().iloc[-1]
-            volume_factor = np.clip(volume_ma / (volume_std + 1e-6), 0.5, 1.5)
+            liquidity_factor = np.clip(volume_ma / (volume_std + 1e-6), 0.5, 1.5)
             
             # Calculate trend strength factor
             returns = data['returns'].iloc[-20:]
             trend_strength = abs(returns.mean() / (returns.std() + 1e-6))
             trend_factor = np.clip(1.0 / (1.0 + trend_strength), 0.7, 1.3)
             
-            # Calculate market regime factor
+            # Calculate market regime factor - default to neutral if model not available
             regime_factor = 1.0
-            if self._detect_regime(self.models['lstm_volatility'].predict(
-                self._create_sequences(data[self.feature_columns])[-1:], verbose=0
-            )) == 'high_volatility':
-                regime_factor = 0.8
+            if self.models['lstm_volatility'] is not None:
+                try:
+                    sequences = self._create_sequences(data[self.feature_columns])
+                    if len(sequences) > 0:
+                        regime_probs = self.models['lstm_volatility'].predict(sequences[-1:], verbose=0)
+                        if self._detect_regime(regime_probs[0]) == 'high_volatility':
+                            regime_factor = 0.8
+                except Exception as e:
+                    logger.warning(f"Error in regime detection for risk calculation: {str(e)}")
             
             # Combine all factors with weights
             vol_factor = np.clip(self.risk_params['max_vol'] / vol, 0.5, 1.5)
@@ -488,7 +514,7 @@ class AdaptiveEnsembleTrader:
             risk_factor = (
                 0.3 * vol_factor +
                 0.2 * spread_factor +
-                0.2 * volume_factor +
+                0.2 * liquidity_factor +
                 0.15 * trend_factor +
                 0.15 * regime_factor
             )
