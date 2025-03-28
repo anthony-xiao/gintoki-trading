@@ -110,13 +110,16 @@ class EnhancedDataLoader:
                 logger.warning(f"Insufficient data for technical indicators: {len(df)} rows")
                 return df
             
-            # Ensure close prices are valid
-            if df['close'].isna().any() or (df['close'] == 0).any():
-                logger.warning("Invalid close prices detected, filling with forward/backward fill")
-                df['close'] = df['close'].replace(0, np.nan).ffill().bfill()
+            # Use mid_price as close price if available, otherwise use close
+            price_col = 'mid_price' if 'mid_price' in df.columns else 'close'
+            
+            # Ensure prices are valid
+            if df[price_col].isna().any() or (df[price_col] == 0).any():
+                logger.warning(f"Invalid {price_col} prices detected, filling with forward/backward fill")
+                df[price_col] = df[price_col].replace(0, np.nan).ffill().bfill()
             
             # Calculate returns with proper handling of edge cases
-            df['returns'] = df['close'].pct_change()
+            df['returns'] = df[price_col].pct_change()
             df['returns'] = df['returns'].replace([np.inf, -np.inf], np.nan)
             df['returns'] = df['returns'].ffill().bfill()
             
@@ -126,7 +129,7 @@ class EnhancedDataLoader:
             df['volatility'] = df['volatility'].ffill().bfill()
             
             # Calculate RSI with proper handling of edge cases
-            delta = df['close'].diff()
+            delta = df[price_col].diff()
             gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
             rs = gain / loss.replace(0, np.nan)  # Avoid division by zero
@@ -135,33 +138,33 @@ class EnhancedDataLoader:
             df['rsi'] = df['rsi'].ffill().bfill()
             
             # Calculate MACD with proper handling of edge cases
-            exp1 = df['close'].ewm(span=12, adjust=False, min_periods=1).mean()
-            exp2 = df['close'].ewm(span=26, adjust=False, min_periods=1).mean()
+            exp1 = df[price_col].ewm(span=12, adjust=False, min_periods=1).mean()
+            exp2 = df[price_col].ewm(span=26, adjust=False, min_periods=1).mean()
             df['macd'] = exp1 - exp2
             df['macd_signal'] = df['macd'].ewm(span=9, adjust=False, min_periods=1).mean()
             df['macd_hist'] = df['macd'] - df['macd_signal']
             
             # Calculate Bollinger Bands with proper handling of edge cases
-            df['bb_middle'] = df['close'].rolling(window=20, min_periods=1).mean()
-            bb_std = df['close'].rolling(window=20, min_periods=1).std()
+            df['bb_middle'] = df[price_col].rolling(window=20, min_periods=1).mean()
+            bb_std = df[price_col].rolling(window=20, min_periods=1).std()
             df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
             df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
             
             # Calculate ATR with proper handling of edge cases
             high_low = df['high'] - df['low']
-            high_close = np.abs(df['high'] - df['close'].shift())
-            low_close = np.abs(df['low'] - df['close'].shift())
+            high_close = np.abs(df['high'] - df[price_col].shift())
+            low_close = np.abs(df['low'] - df[price_col].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
             df['atr'] = true_range.rolling(14, min_periods=1).mean()
             
             # Calculate OBV with proper handling of edge cases
-            df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+            df['obv'] = (np.sign(df[price_col].diff()) * df['volume']).fillna(0).cumsum()
             
             # Calculate ADX and DI with proper handling of edge cases
             high_low = df['high'] - df['low']
-            high_close = np.abs(df['high'] - df['close'].shift())
-            low_close = np.abs(df['low'] - df['close'].shift())
+            high_close = np.abs(df['high'] - df[price_col].shift())
+            low_close = np.abs(df['low'] - df[price_col].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
             atr = true_range.rolling(14, min_periods=1).mean()
@@ -540,9 +543,21 @@ class EnhancedDataLoader:
             # Resample to 1-minute bars
             quotes.set_index('timestamp', inplace=True)
             
-            resampled = quotes.resample('1min').agg({
-                'bid_price': 'mean',
-                'ask_price': 'mean',
+            # Filter out zero or invalid prices
+            valid_quotes = quotes[
+                (quotes['bid_price'] > 0) & 
+                (quotes['ask_price'] > 0) & 
+                (quotes['bid_price'] < quotes['ask_price'])
+            ]
+            
+            if len(valid_quotes) == 0:
+                logger.warning("No valid quotes found after filtering")
+                return pd.DataFrame(columns=['bid_price', 'ask_price', 'bid_size', 'ask_size', 
+                                          'bid_ask_spread', 'mid_price'])
+            
+            resampled = valid_quotes.resample('1min').agg({
+                'bid_price': 'last',  # Use last price instead of mean
+                'ask_price': 'last',
                 'bid_size': 'sum',
                 'ask_size': 'sum'
             })
@@ -552,6 +567,9 @@ class EnhancedDataLoader:
                 bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
                 mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
             ).dropna()
+            
+            # Forward fill any missing values
+            quotes_processed = quotes_processed.ffill()
             
             # Log sample of processed quotes
             logger.info("Sample of processed quotes:")
