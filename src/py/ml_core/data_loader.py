@@ -169,18 +169,31 @@ class EnhancedDataLoader:
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
             
-            # Calculate +DM and -DM
-            plus_dm = df['high'].diff()
-            minus_dm = -df['low'].diff()
+            # Calculate +DM and -DM with proper price movement detection
+            high_diff = df['high'].diff()
+            low_diff = -df['low'].diff()  # Negative because we want positive values for downward movement
             
-            # Ensure +DM and -DM are non-negative
-            plus_dm[plus_dm < 0] = 0
-            minus_dm[minus_dm < 0] = 0
+            # Initialize +DM and -DM
+            plus_dm = pd.Series(0.0, index=df.index)
+            minus_dm = pd.Series(0.0, index=df.index)
             
-            # If +DM is less than -DM, +DM becomes zero
-            plus_dm[plus_dm < minus_dm] = 0
-            # If -DM is less than +DM, -DM becomes zero
-            minus_dm[minus_dm < plus_dm] = 0
+            # Calculate +DM
+            plus_dm = np.where(
+                (high_diff > low_diff) & (high_diff > 0),
+                high_diff,
+                0
+            )
+            
+            # Calculate -DM
+            minus_dm = np.where(
+                (low_diff > high_diff) & (low_diff > 0),
+                low_diff,
+                0
+            )
+            
+            # Convert to Series
+            plus_dm = pd.Series(plus_dm, index=df.index)
+            minus_dm = pd.Series(minus_dm, index=df.index)
             
             # Calculate smoothed TR, +DM, and -DM with proper window
             # Use Wilder's smoothing method
@@ -194,8 +207,8 @@ class EnhancedDataLoader:
             minus_di14 = 100 * (minus_dm14 / tr14.replace(0, np.nan))
             
             # Forward fill any NaN values in DI+ and DI-
-            plus_di14 = plus_di14.fillna(method='ffill')
-            minus_di14 = minus_di14.fillna(method='ffill')
+            plus_di14 = plus_di14.ffill()
+            minus_di14 = minus_di14.ffill()
             
             # Calculate DI+ and DI-
             df['di_plus'] = plus_di14
