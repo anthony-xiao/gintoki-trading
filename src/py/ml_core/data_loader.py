@@ -171,8 +171,12 @@ class EnhancedDataLoader:
             
             # Calculate +DM and -DM with proper price movement detection
             # Calculate high and low differences using shift(1) to get previous values
-            high_diff = df['high'] - df['high'].shift(1)
-            low_diff = df['low'].shift(1) - df['low']  # Previous low - current low
+            high_diff = df['high'].diff()
+            low_diff = -df['low'].diff()  # Negative of low difference to match Wilder's method
+            
+            # Fill NaN values with 0 for the first row
+            high_diff = high_diff.fillna(0)
+            low_diff = low_diff.fillna(0)
             
             # Initialize +DM and -DM
             plus_dm = pd.Series(0.0, index=df.index)
@@ -181,6 +185,7 @@ class EnhancedDataLoader:
             # Calculate +DM and -DM according to Wilder's method
             # +DM is the current high minus the previous high
             # -DM is the previous low minus the current low
+            # Only count the larger of the two movements if they're in opposite directions
             plus_dm = np.where(
                 (high_diff > low_diff) & (high_diff > 0),
                 high_diff,
@@ -301,6 +306,12 @@ class EnhancedDataLoader:
             logger.info(f"  DI-: {minus_di14.head().values}")
             logger.info(f"  DX: {dx.head().values}")
             logger.info(f"  ADX: {df['adx'].head().values}")
+            
+            # Log raw price data for debugging
+            logger.info("Raw price data:")
+            logger.info(f"  High: {df['high'].head().values}")
+            logger.info(f"  Low: {df['low'].head().values}")
+            logger.info(f"  Close: {df[price_col].head().values}")
             
             return df
             
