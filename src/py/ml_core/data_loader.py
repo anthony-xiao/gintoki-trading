@@ -178,6 +178,8 @@ class EnhancedDataLoader:
             minus_dm = pd.Series(0.0, index=df.index)
             
             # Calculate +DM and -DM according to Wilder's method
+            # +DM is the current high minus the previous high
+            # -DM is the previous low minus the current low
             plus_dm = np.where(
                 (high_diff > low_diff) & (high_diff > 0),
                 high_diff,
@@ -217,8 +219,10 @@ class EnhancedDataLoader:
             minus_dm14 = minus_dm14.ffill()
             
             # Calculate DI+ and DI- with proper handling of edge cases
-            plus_di14 = 100 * (plus_dm14 / tr14.replace(0, np.nan))
-            minus_di14 = 100 * (minus_dm14 / tr14.replace(0, np.nan))
+            # Add a small constant to avoid division by zero
+            epsilon = 1e-8
+            plus_di14 = 100 * (plus_dm14 / (tr14 + epsilon))
+            minus_di14 = 100 * (minus_dm14 / (tr14 + epsilon))
             
             # Forward fill any NaN values in DI+ and DI-
             plus_di14 = plus_di14.ffill()
@@ -230,7 +234,8 @@ class EnhancedDataLoader:
             
             # Calculate DX with proper handling of edge cases
             # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
-            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.nan)
+            # Add a small constant to avoid division by zero
+            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14 + epsilon)
             
             # Calculate ADX using Wilder's smoothing method
             # First period uses simple average
@@ -280,6 +285,21 @@ class EnhancedDataLoader:
             logger.info(f"  DI- - Mean: {minus_di14.mean():.4f}, Std: {minus_di14.std():.4f}")
             logger.info(f"  DX - Mean: {dx.mean():.4f}, Std: {dx.std():.4f}")
             logger.info(f"  ADX - Mean: {df['adx'].mean():.4f}, Std: {df['adx'].std():.4f}")
+            
+            # Log sample values for debugging
+            logger.info("Sample values:")
+            logger.info(f"  High diff: {high_diff.head().values}")
+            logger.info(f"  Low diff: {low_diff.head().values}")
+            logger.info(f"  +DM: {plus_dm.head().values}")
+            logger.info(f"  -DM: {minus_dm.head().values}")
+            logger.info(f"  TR: {true_range.head().values}")
+            logger.info(f"  TR14: {tr14.head().values}")
+            logger.info(f"  +DM14: {plus_dm14.head().values}")
+            logger.info(f"  -DM14: {minus_dm14.head().values}")
+            logger.info(f"  DI+: {plus_di14.head().values}")
+            logger.info(f"  DI-: {minus_di14.head().values}")
+            logger.info(f"  DX: {dx.head().values}")
+            logger.info(f"  ADX: {df['adx'].head().values}")
             
             return df
             
