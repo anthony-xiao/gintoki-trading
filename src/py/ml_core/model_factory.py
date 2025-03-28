@@ -335,14 +335,22 @@ class ModelFactory:
     def load_models(self, version: Optional[str] = None) -> None:
         """Load pre-trained models from S3"""
         try:
+            logger.info("Loading models from S3...")
+            
             # Load individual models
             for model_name in ['volatility', 'transformer', 'transformer_optimized']:
                 if model_name in self.models:
+                    model_path = self.config.get(f'{model_name}_model_path')
+                    logger.info(f"Loading {model_name} model from: {model_path}")
                     self.models[model_name].model = self.load_model_from_s3(model_name, version)
+                    logger.info(f"✅ Successfully loaded {model_name} model")
             
             # Try to load ensemble configuration, but don't fail if it doesn't exist
             try:
+                ensemble_config_path = self.config.get('ensemble_config_path')
+                logger.info(f"Loading ensemble configuration from: {ensemble_config_path}")
                 ensemble_config = self.load_ensemble_config_from_s3(version)
+                logger.info("✅ Successfully loaded ensemble configuration")
             except FileNotFoundError:
                 logger.warning("No ensemble config found, using default configuration")
                 # Create default ensemble config
@@ -360,15 +368,18 @@ class ModelFactory:
                 }
             
             # Create new ensemble instance with the config
+            logger.info("Initializing ensemble with loaded configuration...")
             self.ensemble = AdaptiveEnsembleTrader(ensemble_config, skip_model_loading=True)
             
             # Set the models in the ensemble
             if hasattr(self.ensemble, 'set_models'):
+                logger.info("Setting models in ensemble...")
                 self.ensemble.set_models({
                     'lstm_volatility': self.models['volatility'].model,
                     'transformer_trend': self.models['transformer'].model,
                     'transformer_optimized': self.models['transformer_optimized'].model
                 })
+                logger.info("✅ Successfully set models in ensemble")
             
             logger.info("✅ All models loaded successfully from S3")
             

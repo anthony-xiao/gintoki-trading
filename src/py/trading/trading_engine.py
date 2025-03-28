@@ -5,6 +5,9 @@ import logging
 from datetime import datetime, timedelta
 from ..ml_core.model_factory import ModelFactory
 from ..ml_core.data_loader import EnhancedDataLoader
+from .alpaca_client import AlpacaTradingClient
+from .performance_tracker import PerformanceTracker
+from alpaca.trading.enums import OrderSide
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +22,38 @@ class TradingEngine:
         self.cash = config.get('initial_capital', 100000.0)
         self.risk_per_trade = config.get('risk_per_trade', 0.02)  # 2% risk per trade
         
+        # Initialize Alpaca client
+        self.alpaca = AlpacaTradingClient(paper=config.get('paper_trading', True))
+        
+        # Initialize performance tracker
+        self.performance_tracker = PerformanceTracker(config)
+        
     def initialize(self) -> None:
         """Initialize models and load historical data"""
         try:
+            # Log model paths being used
+            logger.info("Initializing trading engine with the following model versions:")
+            for model_type in ['volatility', 'transformer', 'transformer_optimized']:
+                model_path = self.config.get(f'{model_type}_model_path')
+                logger.info(f"  {model_type}: {model_path}")
+            logger.info(f"  ensemble config: {self.config.get('ensemble_config_path')}")
+            
             # Create and load models
             self.model_factory.create_models()
             self.model_factory.load_models({
                 'volatility': self.config.get('volatility_model_path'),
-                'transformer': self.config.get('transformer_model_path')
+                'transformer': self.config.get('transformer_model_path'),
+                'transformer_optimized': self.config.get('transformer_optimized_model_path'),
+                'ensemble': self.config.get('ensemble_config_path')
             })
+            
+            # Get initial account state
+            account_summary = self.alpaca.get_account_summary()
+            self.cash = account_summary['cash']
+            
+            # Get current positions
+            for position in account_summary['positions']:
+                self.positions[position['symbol']] = position['qty']
             
             logger.info("✅ Trading engine initialized successfully")
             
@@ -55,7 +81,7 @@ class TradingEngine:
             logger.error(f"Failed to process market data: {str(e)}")
             raise
             
-    def execute_trade(self, signal_data: Dict, current_price: float) -> Optional[Dict]:
+    def execute_trade(self, signal_data: Dict, current_price: float, symbol: str) -> Optional[Dict]:
         """Execute trade based on signal and current market conditions"""
         try:
             signal = signal_data['signal']
@@ -71,20 +97,35 @@ class TradingEngine:
                 logger.warning("Insufficient funds for trade")
                 return None
                 
+            # Determine order side based on signal
+            side = OrderSide.BUY if signal > 0 else OrderSide.SELL
+            
+            # Execute order through Alpaca
+            order_result = self.alpaca.execute_order(symbol, position_size, side)
+            if not order_result:
+                logger.error("Failed to execute order")
+                return None
+                
             # Record trade
             trade = {
                 'timestamp': signal_data['timestamp'],
+                'symbol': symbol,
                 'signal': signal,
                 'position_size': position_size,
                 'price': current_price,
                 'value': trade_value,
-                'metadata': signal_data['metadata']
+                'metadata': signal_data['metadata'],
+                'order_id': order_result['id'],
+                'order_status': order_result['status']
             }
             
             # Update positions and cash
-            self.positions['current'] = position_size
+            self.positions[symbol] = position_size
             self.cash -= trade_value
             self.trade_history.append(trade)
+            
+            # Add trade to performance tracker
+            self.performance_tracker.add_trade(trade)
             
             logger.info(f"Executed trade: {trade}")
             return trade
@@ -119,28 +160,29 @@ class TradingEngine:
             logger.error(f"Failed to calculate position size: {str(e)}")
             raise
             
-    def update_performance(self, current_price: float) -> Dict:
+    def update_performance(self, current_price: float, symbol: str) -> Dict:
         """Update performance metrics and adjust model weights"""
         try:
             if not self.positions:
                 return {}
                 
-            # Calculate current P&L
-            position = self.positions['current']
-            pnl = position * (current_price - self.trade_history[-1]['price'])
-            
-            # Calculate performance metrics
-            performance = {
-                'pnl': pnl,
-                'return': pnl / self.trade_history[-1]['value'],
-                'timestamp': datetime.now()
-            }
+            # Get current position from Alpaca
+            position = self.alpaca.get_position(symbol)
+            if not position:
+                return {}
+                
+            # Update performance metrics
+            current_prices = {symbol: current_price}
+            performance = self.performance_tracker.update_metrics(
+                self.positions,
+                current_prices
+            )
             
             # Update model weights based on performance
             self.model_factory.update_ensemble_weights({
-                'transformer': performance['return'],
-                'lstm': performance['return'],
-                'xgb': performance['return']
+                'transformer': performance['daily_return'],
+                'lstm': performance['daily_return'],
+                'xgb': performance['daily_return']
             })
             
             return performance
@@ -151,12 +193,10 @@ class TradingEngine:
             
     def get_portfolio_summary(self) -> Dict:
         """Get current portfolio summary"""
+        account_summary = self.alpaca.get_account_summary()
+        performance_summary = self.performance_tracker.get_performance_summary()
+        
         return {
-            'cash': self.cash,
-            'positions': self.positions,
-            'total_trades': len(self.trade_history),
-            'current_value': self.cash + sum(
-                pos * self.trade_history[-1]['price'] 
-                for pos in self.positions.values()
-            )
+            **account_summary,
+            'performance': performance_summary
         } 

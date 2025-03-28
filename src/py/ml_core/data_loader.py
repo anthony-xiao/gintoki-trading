@@ -297,6 +297,16 @@ class EnhancedDataLoader:
                 # Apply dtype conversions
                 df = df.astype({k:v for k,v in dtypes.items() if k in df.columns})
                 
+                # Convert index to datetime if it's not already
+                if not isinstance(df.index, pd.DatetimeIndex):
+                    try:
+                        # Try to parse the filename for the date
+                        date_str = key.split('/')[-1].replace('.parquet', '')
+                        df.index = pd.to_datetime(df.index, unit='s') + pd.Timestamp(date_str)
+                    except:
+                        # If that fails, try to parse the index directly
+                        df.index = pd.to_datetime(df.index)
+                
                 # Downsample large files
                 if len(df) > 1_000_000:
                     df = df.sample(1_000_000)
