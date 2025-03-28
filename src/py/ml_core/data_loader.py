@@ -171,8 +171,8 @@ class EnhancedDataLoader:
             
             # Calculate +DM and -DM with proper price movement detection
             # Calculate high and low differences using shift(1) to get previous values
-            high_diff = df['high'].diff()
-            low_diff = -df['low'].diff()  # Negative of low difference to match Wilder's method
+            high_diff = df['high'] - df['high'].shift(1)
+            low_diff = df['low'].shift(1) - df['low']  # Previous low - current low
             
             # Fill NaN values with 0 for the first row
             high_diff = high_diff.fillna(0)
