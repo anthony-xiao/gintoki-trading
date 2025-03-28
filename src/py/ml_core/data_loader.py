@@ -102,59 +102,45 @@ class EnhancedDataLoader:
         return {ticker: group for ticker, group in all_actions.groupby('symbol')}
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate technical indicators for the dataset with better NaN handling"""
+        """Calculate technical indicators for the dataset"""
         try:
-            logger = logging.getLogger("training")
-            logger.info(f"Calculating technical indicators for data shape: {df.shape}")
-            logger.info(f"Sample of input data:\n{df[['close', 'high', 'low', 'volume']].head()}")
-            
-            # Calculate RSI with proper NaN handling
+            # Ensure we have enough data for calculations
+            if len(df) < 26:  # Minimum required for MACD
+                logger.warning(f"Insufficient data for technical indicators: {len(df)} rows")
+                return df
+                
+            # Calculate RSI
             delta = df['close'].diff()
-            logger.info(f"RSI delta sample:\n{delta.head()}")
-            
             gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
             loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
-            logger.info(f"RSI gain/loss sample:\nGain:\n{gain.head()}\nLoss:\n{loss.head()}")
-            
-            rs = gain / loss.replace(0, np.inf)  # Avoid division by zero
+            rs = gain / loss
             df['rsi'] = 100 - (100 / (1 + rs))
-            logger.info(f"RSI sample:\n{df['rsi'].head()}")
             
-            # Calculate MACD with proper NaN handling
+            # Calculate MACD
             exp1 = df['close'].ewm(span=12, adjust=False, min_periods=1).mean()
             exp2 = df['close'].ewm(span=26, adjust=False, min_periods=1).mean()
-            logger.info(f"MACD exp1/exp2 sample:\nExp1:\n{exp1.head()}\nExp2:\n{exp2.head()}")
-            
             df['macd'] = exp1 - exp2
             df['macd_signal'] = df['macd'].ewm(span=9, adjust=False, min_periods=1).mean()
             df['macd_hist'] = df['macd'] - df['macd_signal']
-            logger.info(f"MACD indicators sample:\nMACD:\n{df['macd'].head()}\nSignal:\n{df['macd_signal'].head()}\nHist:\n{df['macd_hist'].head()}")
             
-            # Calculate Bollinger Bands with proper NaN handling
+            # Calculate Bollinger Bands
             df['bb_middle'] = df['close'].rolling(window=20, min_periods=1).mean()
             bb_std = df['close'].rolling(window=20, min_periods=1).std()
-            logger.info(f"BB middle/std sample:\nMiddle:\n{df['bb_middle'].head()}\nStd:\n{bb_std.head()}")
-            
             df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
             df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
-            logger.info(f"BB bands sample:\nUpper:\n{df['bb_upper'].head()}\nLower:\n{df['bb_lower'].head()}")
             
-            # Calculate ATR with proper NaN handling
+            # Calculate ATR
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift())
             low_close = np.abs(df['low'] - df['close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            logger.info(f"ATR components sample:\nHigh-Low:\n{high_low.head()}\nHigh-Close:\n{high_close.head()}\nLow-Close:\n{low_close.head()}")
-            
             df['atr'] = true_range.rolling(14, min_periods=1).mean()
-            logger.info(f"ATR sample:\n{df['atr'].head()}")
             
-            # Calculate OBV with proper NaN handling
+            # Calculate OBV
             df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
-            logger.info(f"OBV sample:\n{df['obv'].head()}")
             
-            # Calculate ADX and DI with proper NaN handling
+            # Calculate ADX and DI
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift())
             low_close = np.abs(df['low'] - df['close'].shift())
@@ -167,24 +153,24 @@ class EnhancedDataLoader:
             minus_dm = df['low'].diff()
             plus_dm[plus_dm < 0] = 0
             minus_dm[minus_dm > 0] = 0
-            logger.info(f"DM components sample:\n+DM:\n{plus_dm.head()}\n-DM:\n{minus_dm.head()}")
             
             # Calculate smoothed TR, +DM, and -DM
             tr14 = atr
-            plus_di14 = 100 * (plus_dm.rolling(14, min_periods=1).mean() / tr14.replace(0, np.inf))
-            minus_di14 = 100 * (minus_dm.rolling(14, min_periods=1).mean() / tr14.replace(0, np.inf))
-            logger.info(f"DI components sample:\n+DI:\n{plus_di14.head()}\n-DI:\n{minus_di14.head()}")
+            plus_di14 = 100 * (plus_dm.rolling(14, min_periods=1).mean() / tr14)
+            minus_di14 = 100 * (minus_dm.rolling(14, min_periods=1).mean() / tr14)
             
             df['di_plus'] = plus_di14
             df['di_minus'] = minus_di14
             
             # Calculate ADX
-            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.inf)
+            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14)
             df['adx'] = dx.rolling(14, min_periods=1).mean()
-            logger.info(f"ADX sample:\n{df['adx'].head()}")
             
-            # Fill any remaining NaN values with forward fill then backward fill
-            df = df.ffill().bfill()
+            # Forward fill any remaining NaN values
+            df = df.ffill()
+            
+            # Backward fill any remaining NaN values at the start
+            df = df.bfill()
             
             # Verify no NaN values remain
             if df.isna().any().any():
@@ -193,22 +179,10 @@ class EnhancedDataLoader:
                 # Fill any remaining NaNs with 0
                 df = df.fillna(0)
             
-            # Log final statistics
-            logger.info("Final technical indicator statistics:")
-            for col in self.technical_indicators:
-                if col in df.columns:
-                    stats = df[col].describe()
-                    logger.info(f"{col}:\n{stats}")
-            
             return df
             
         except Exception as e:
             logger.error(f"Error calculating technical indicators: {str(e)}")
-            # Return original DataFrame with technical indicators set to 0
-            for col in ['rsi', 'macd', 'macd_signal', 'macd_hist', 
-                       'bb_upper', 'bb_middle', 'bb_lower', 'atr', 
-                       'obv', 'adx', 'di_plus', 'di_minus']:
-                df[col] = 0.0
             return df
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
