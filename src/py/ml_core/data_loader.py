@@ -102,67 +102,84 @@ class EnhancedDataLoader:
         return {ticker: group for ticker, group in all_actions.groupby('symbol')}
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate technical indicators for the dataset"""
+        """Calculate technical indicators for the dataset with better NaN handling"""
         try:
-            # Calculate RSI
+            # Calculate RSI with proper NaN handling
             delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
+            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+            rs = gain / loss.replace(0, np.inf)  # Avoid division by zero
             df['rsi'] = 100 - (100 / (1 + rs))
             
-            # Calculate MACD
-            exp1 = df['close'].ewm(span=12, adjust=False).mean()
-            exp2 = df['close'].ewm(span=26, adjust=False).mean()
+            # Calculate MACD with proper NaN handling
+            exp1 = df['close'].ewm(span=12, adjust=False, min_periods=1).mean()
+            exp2 = df['close'].ewm(span=26, adjust=False, min_periods=1).mean()
             df['macd'] = exp1 - exp2
-            df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+            df['macd_signal'] = df['macd'].ewm(span=9, adjust=False, min_periods=1).mean()
             df['macd_hist'] = df['macd'] - df['macd_signal']
             
-            # Calculate Bollinger Bands
-            df['bb_middle'] = df['close'].rolling(window=20).mean()
-            bb_std = df['close'].rolling(window=20).std()
+            # Calculate Bollinger Bands with proper NaN handling
+            df['bb_middle'] = df['close'].rolling(window=20, min_periods=1).mean()
+            bb_std = df['close'].rolling(window=20, min_periods=1).std()
             df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
             df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
             
-            # Calculate ATR
+            # Calculate ATR with proper NaN handling
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift())
             low_close = np.abs(df['low'] - df['close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            df['atr'] = true_range.rolling(14).mean()
+            df['atr'] = true_range.rolling(14, min_periods=1).mean()
             
-            # Calculate OBV
+            # Calculate OBV with proper NaN handling
             df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
             
-            # Calculate ADX
+            # Calculate ADX and DI with proper NaN handling
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df['close'].shift())
             low_close = np.abs(df['low'] - df['close'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            atr = true_range.rolling(14).mean()
+            atr = true_range.rolling(14, min_periods=1).mean()
             
+            # Calculate +DM and -DM
             plus_dm = df['high'].diff()
             minus_dm = df['low'].diff()
             plus_dm[plus_dm < 0] = 0
             minus_dm[minus_dm > 0] = 0
             
+            # Calculate smoothed TR, +DM, and -DM
             tr14 = atr
-            plus_di14 = 100 * (plus_dm.rolling(14).mean() / tr14)
-            minus_di14 = 100 * (minus_dm.rolling(14).mean() / tr14)
+            plus_di14 = 100 * (plus_dm.rolling(14, min_periods=1).mean() / tr14.replace(0, np.inf))
+            minus_di14 = 100 * (minus_dm.rolling(14, min_periods=1).mean() / tr14.replace(0, np.inf))
             
             df['di_plus'] = plus_di14
             df['di_minus'] = minus_di14
             
             # Calculate ADX
-            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14)
-            df['adx'] = dx.rolling(14).mean()
+            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.inf)
+            df['adx'] = dx.rolling(14, min_periods=1).mean()
             
-            return df.fillna(method='ffill').fillna(method='bfill')
+            # Fill any remaining NaN values with forward fill then backward fill
+            df = df.ffill().bfill()
+            
+            # Verify no NaN values remain
+            if df.isna().any().any():
+                nan_cols = df.columns[df.isna().any()].tolist()
+                logger.warning(f"NaN values remain in columns: {nan_cols}")
+                # Fill any remaining NaNs with 0
+                df = df.fillna(0)
+            
+            return df
             
         except Exception as e:
             logger.error(f"Error calculating technical indicators: {str(e)}")
+            # Return original DataFrame with technical indicators set to 0
+            for col in ['rsi', 'macd', 'macd_signal', 'macd_hist', 
+                       'bb_upper', 'bb_middle', 'bb_lower', 'atr', 
+                       'obv', 'adx', 'di_plus', 'di_minus']:
+                df[col] = 0.0
             return df
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
@@ -255,6 +272,10 @@ class EnhancedDataLoader:
                     continue
                 keys.append(key)
         
+        if not keys:
+            logger.warning(f"No parquet files found in s3://{self.bucket}/{prefix}")
+            return pd.DataFrame()
+        
         # Parallel processing function with validation
         def process_key(key):
             try:
@@ -307,10 +328,7 @@ class EnhancedDataLoader:
                         # If that fails, try to parse the index directly
                         df.index = pd.to_datetime(df.index)
                 
-                # Downsample large files
-                if len(df) > 1_000_000:
-                    df = df.sample(1_000_000)
-                    
+                logger.info(f"✅ Loaded {len(df)} rows from {key}")
                 return df
                 
             except Exception as e:
@@ -330,9 +348,13 @@ class EnhancedDataLoader:
                         pd.concat(dfs).reset_index(drop=True)
                         gc.collect()
         
+        if not dfs:
+            logger.warning(f"No data loaded from s3://{self.bucket}/{prefix}")
+            return pd.DataFrame()
+            
         final_df = pd.concat(dfs, ignore_index=False).sort_index()
         logger.info(f"✅ Loaded {len(final_df)} total records")
-        return final_df 
+        return final_df
     
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
         """Create validated sequences with strict shape enforcement and feature masking"""
@@ -482,14 +504,29 @@ class EnhancedDataLoader:
 
     def create_sequences(self, data: pd.DataFrame, sequence_length: int = 60) -> np.ndarray:
         """Create strictly uniform sequences with feature masking"""
+        logger = logging.getLogger("training")
+        logger.info(f"Creating sequences with length {sequence_length} from data shape {data.shape}")
+        
+        if data.empty:
+            logger.warning("Empty DataFrame provided for sequence creation")
+            return np.array([], dtype=np.float32)
+            
+        if len(data) < sequence_length:
+            logger.warning(f"Insufficient data for sequences. Need {sequence_length}, got {len(data)}")
+            return np.array([], dtype=np.float32)
+            
         sequences = []
         for i in range(sequence_length, len(data)):
             # Use feature_columns which may be masked
             seq = data.iloc[i-sequence_length:i][self.feature_columns].values
             if seq.shape != (sequence_length, len(self.feature_columns)):
+                logger.warning(f"Invalid sequence shape: {seq.shape}, expected {(sequence_length, len(self.feature_columns))}")
                 continue  # Skip invalid sequences
             sequences.append(seq)
-        return np.array(sequences, dtype=np.float32)  # Explicit dtype
+            
+        result = np.array(sequences, dtype=np.float32)  # Explicit dtype
+        logger.info(f"Created {len(result)} sequences with shape {result.shape}")
+        return result
 
     def load_model_metadata(self, model_path: str) -> Dict:
         """Load feature metadata from saved model"""

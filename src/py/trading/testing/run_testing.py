@@ -50,21 +50,6 @@ def run_testing(config: Dict):
                     logger.warning(f"No data in date range {start_date} to {end_date}")
                     continue
                 
-                # Resample to daily data
-                df = df.resample('D').agg({
-                    'open': 'first',
-                    'high': 'max',
-                    'low': 'min',
-                    'close': 'last',
-                    'volume': 'sum',
-                    'vwap': 'mean',
-                    'bid_ask_spread': 'mean',
-                    'days_since_dividend': 'last',
-                    'split_ratio': 'last',
-                    'mid_price': 'last'
-                }).dropna()
-                logger.info(f"After resampling: {len(df)} rows")
-                
                 # Add volatility column if not present
                 if 'volatility' not in df.columns:
                     df['volatility'] = df['close'].pct_change().rolling(window=20).std()
@@ -109,19 +94,18 @@ def run_testing(config: Dict):
 if __name__ == "__main__":
     # Example configuration
     config = {
-        # 'test_symbols': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'],
         'test_symbols': ['BTDR'],
-        'train_window': 252,    # 1 year
-        'val_window': 63,       # 3 months
-        'test_window': 63,      # 3 months
-        'step_size': 21,        # 1 month
-        'feature_lookback': 30, # Days of historical data needed for features
+        'train_window': 252 * 390,    # 1 year of trading minutes (252 days * 390 minutes)
+        'val_window': 63 * 390,       # 3 months of trading minutes
+        'test_window': 63 * 390,      # 3 months of trading minutes
+        'step_size': 21 * 390,        # 1 month of trading minutes
+        'feature_lookback': 30 * 390, # 30 days of trading minutes for features
         
         # Model parameters
-        'seq_length': 10,       # Shorter sequence length for testing
-        'd_model': 32,          # Smaller model size
-        'num_heads': 4,         # Fewer attention heads
-        'epochs': 5,            # More epochs for testing
+        'seq_length': 60,             # 60 minutes of sequence length
+        'd_model': 32,                # Smaller model size
+        'num_heads': 4,               # Fewer attention heads
+        'epochs': 5,                  # More epochs for testing
         'batch_size': 32,
         
         # Trading parameters

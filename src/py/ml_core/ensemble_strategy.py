@@ -63,37 +63,50 @@ class AdaptiveEnsembleTrader:
         logger.info(f"Initial data shape: {processed.shape}")
         logger.info(f"Initial columns: {processed.columns.tolist()}")
         
-        # Add derived features first with better NaN handling
-        # Calculate returns with forward fill for NaN values
-        processed['returns'] = processed['close'].pct_change()  # Use pct_change instead of log returns for better stability
-        processed['returns'] = processed['returns'].ffill()
-        
-        # Calculate volatility with forward fill
-        processed['volatility'] = processed['returns'].rolling(20, min_periods=1).std()
-        processed['volatility'] = processed['volatility'].ffill()
-        
-        # Calculate true range with forward fill
-        processed['true_range'] = self._true_range(processed)
-        processed['true_range'] = processed['true_range'].ffill()
-        
-        # Calculate volume_z with improved normalization
-        # First, calculate rolling statistics with a minimum number of periods
-        volume_ma = processed['volume'].rolling(50, min_periods=1).mean()
-        volume_std = processed['volume'].rolling(50, min_periods=1).std()
-        
-        # Add a small constant to avoid division by zero, but make it relative to the mean
-        epsilon = volume_ma * 1e-6  # Scale epsilon with the mean volume
-        processed['volume_z'] = (processed['volume'] - volume_ma) / (volume_std + epsilon)
-        
-        # Clip extreme values to prevent outliers
-        processed['volume_z'] = processed['volume_z'].clip(-5, 5)
-        
-        # Forward fill any remaining NaN values
-        processed['volume_z'] = processed['volume_z'].ffill()
-        
-        # Calculate spread ratio with forward fill
-        processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']
-        processed['spread_ratio'] = processed['spread_ratio'].ffill()
+        # Check if we have enough data for calculations
+        if len(processed) < 2:
+            logger.warning("Insufficient data for feature calculations. Using actual values.")
+            # For single row, use actual values
+            processed['returns'] = 0.0  # Can't calculate returns without previous data
+            processed['volatility'] = processed.get('volatility', 0.0)  # Use existing volatility if available
+            processed['true_range'] = processed['high'] - processed['low']  # Use actual high-low range
+            processed['volume_z'] = 1.0  # Use a neutral value instead of 0
+            processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']  # Use actual spread ratio
+        else:
+            # Define derived features
+            derived_features = ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']
+            
+            # Add derived features first with better NaN handling
+            # Calculate returns with forward fill for NaN values
+            processed['returns'] = processed['close'].pct_change()  # Use pct_change instead of log returns for better stability
+            processed['returns'] = processed['returns'].ffill()
+            
+            # Calculate volatility with forward fill
+            processed['volatility'] = processed['returns'].rolling(20, min_periods=1).std()
+            processed['volatility'] = processed['volatility'].ffill()
+            
+            # Calculate true range with forward fill
+            processed['true_range'] = self._true_range(processed)
+            processed['true_range'] = processed['true_range'].ffill()
+            
+            # Calculate volume_z with improved normalization
+            # First, calculate rolling statistics with a minimum number of periods
+            volume_ma = processed['volume'].rolling(50, min_periods=1).mean()
+            volume_std = processed['volume'].rolling(50, min_periods=1).std()
+            
+            # Add a small constant to avoid division by zero, but make it relative to the mean
+            epsilon = volume_ma * 1e-6  # Scale epsilon with the mean volume
+            processed['volume_z'] = (processed['volume'] - volume_ma) / (volume_std + epsilon)
+            
+            # Clip extreme values to prevent outliers
+            processed['volume_z'] = processed['volume_z'].clip(-5, 5)
+            
+            # Forward fill any remaining NaN values
+            processed['volume_z'] = processed['volume_z'].ffill()
+            
+            # Calculate spread ratio with forward fill
+            processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']
+            processed['spread_ratio'] = processed['spread_ratio'].ffill()
         
         # Log shape after adding derived features
         logger.info(f"Data shape after adding derived features: {processed.shape}")
@@ -115,8 +128,7 @@ class AdaptiveEnsembleTrader:
         if feature_mask is not None and feature_metadata is not None:
             selected_features = feature_metadata.get('selected_features', self.feature_columns)
             # Ensure all required derived features are included
-            derived_features = ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']
-            selected_features = list(set(selected_features + derived_features))
+            selected_features = list(set(selected_features + ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']))
             
             # Log feature selection
             logger.info(f"Selected features: {selected_features}")
@@ -147,12 +159,12 @@ class AdaptiveEnsembleTrader:
             # For derived features, we expect some NaN values at the start
             # For other features, we should investigate
             for col in nan_cols:
-                if col not in derived_features:
+                if col not in ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']:
                     logger.warning(f"Unexpected NaN values in column: {col}")
             
             # Handle NaN values with a more robust approach
             for col in nan_cols:
-                if col in derived_features:
+                if col in ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']:
                     # For derived features, use forward fill then backward fill
                     processed[col] = processed[col].ffill().bfill()
                 else:
@@ -170,7 +182,7 @@ class AdaptiveEnsembleTrader:
                     if count > 0:
                         logger.warning(f"  {col}: {count} NaN values")
                         # Try one final time to handle any remaining NaNs
-                        if col in derived_features:
+                        if col in ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']:
                             processed[col] = processed[col].ffill().bfill()
                         else:
                             processed[col] = processed[col].fillna(processed[col].median())

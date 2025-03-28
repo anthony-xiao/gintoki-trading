@@ -7,6 +7,7 @@ from ...ml_core.model_factory import ModelFactory
 from ...ml_core.data_loader import EnhancedDataLoader
 from ..performance_tracker import PerformanceTracker
 from backtesting import Strategy, Backtest
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -60,18 +61,50 @@ class WalkForwardTester:
                 test_end = val_end + self.test_window
                 
                 # Get data for each period
-                train_data = symbol_data.iloc[current_start:train_end]
-                val_data = symbol_data.iloc[train_end:val_end]
-                test_data = symbol_data.iloc[val_end:test_end]
+                train_data = symbol_data.iloc[current_start:train_end].copy()
+                val_data = symbol_data.iloc[train_end:val_end].copy()
+                test_data = symbol_data.iloc[val_end:test_end].copy()
                 
                 logger.info(f"Running walk-forward iteration:")
-                logger.info(f"  Train period: {train_data.index[0]} to {train_data.index[-1]}")
-                logger.info(f"  Validation period: {val_data.index[0]} to {val_data.index[-1]}")
-                logger.info(f"  Test period: {test_data.index[0]} to {test_data.index[-1]}")
+                logger.info(f"  Train period: {train_data.index[0]} to {train_data.index[-1]} (shape: {train_data.shape})")
+                logger.info(f"  Validation period: {val_data.index[0]} to {val_data.index[-1]} (shape: {val_data.shape})")
+                logger.info(f"  Test period: {test_data.index[0]} to {test_data.index[-1]} (shape: {test_data.shape})")
+                
+                # Create models first
+                self.model_factory.create_models()
+                
+                # Get sequence length from config
+                seq_length = self.config.get('seq_length', 60)
+                
+                # Ensure we have enough data for sequences
+                if len(train_data) < seq_length:
+                    logger.warning(f"Insufficient training data: {len(train_data)} < {seq_length}")
+                    current_start += self.step_size
+                    continue
                 
                 # Train models on training data
-                self.model_factory.create_models()
-                self.model_factory.train_models(train_data)
+                for model_name, model in self.model_factory.models.items():
+                    if hasattr(model, 'train'):
+                        logger.info(f"Training {model_name}...")
+                        try:
+                            if model_name == 'transformer' or model_name == 'transformer_optimized':
+                                # Preprocess data for transformer models
+                                X, y = self._preprocess_data_for_transformer(train_data)
+                                logger.info(f"Preprocessed data shape: X={X.shape}, y={y.shape}")
+                                
+                                # Save preprocessed data to a temporary file
+                                data_path = f'temp_transformer_data_{model_name}.npz'
+                                np.savez(data_path, X=X, y=y)
+                                model.train(data_path)
+                                # Clean up temporary file
+                                os.remove(data_path)
+                            else:
+                                # For other models, use the data directly
+                                logger.info(f"Training {model_name} with data shape: {train_data.shape}")
+                                model.train(train_data)
+                        except Exception as e:
+                            logger.error(f"Failed to train {model_name}: {str(e)}")
+                            continue
                 
                 # Validate models on validation data
                 val_metrics = self._validate_period(val_data)
@@ -103,16 +136,25 @@ class WalkForwardTester:
             val_results = []
             
             # Process each day in the validation period
-            for date, day_data in val_data.groupby(level=0):
+            for i in range(len(val_data)):
+                # Get the current day's data plus enough history for sequences
+                if i < self.model_factory.ensemble.seq_length:
+                    # Skip days where we don't have enough history
+                    continue
+                    
+                # Get data window including history
+                data_window = val_data.iloc[i-self.model_factory.ensemble.seq_length:i+1]
+                day_data = data_window.iloc[-1:]  # Current day's data
+                
                 # Get trading signal
-                signal, metadata = self.model_factory.get_trading_signal(day_data)
+                signal, metadata = self.model_factory.get_trading_signal(data_window)
                 
                 # Calculate position size
                 position_size = self._calculate_position_size(signal, day_data)
                 
                 # Record results
                 result = {
-                    'date': date,
+                    'date': day_data.index[0],
                     'signal': signal,
                     'position_size': position_size,
                     'price': day_data['close'].iloc[-1],
@@ -328,4 +370,53 @@ class WalkForwardTester:
             
         except Exception as e:
             logger.error(f"Failed to aggregate results: {str(e)}")
+            raise
+
+    def _preprocess_data_for_transformer(self, data: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
+        """Preprocess data for transformer models"""
+        try:
+            # Get sequence length from config
+            seq_length = self.config.get('seq_length', 60)
+            
+            # Get base features only
+            base_features = [
+                'open', 'high', 'low', 'close', 'volume', 'vwap',
+                'bid_ask_spread', 'days_since_dividend', 'split_ratio', 'mid_price'
+            ]
+            
+            # Verify all required features are present
+            missing_features = [f for f in base_features if f not in data.columns]
+            if missing_features:
+                logger.error(f"Missing required features: {missing_features}")
+                raise ValueError(f"Missing required features: {missing_features}")
+            
+            # Create sequences
+            X = []
+            y = []
+            
+            for i in range(seq_length, len(data)):
+                # Get sequence of data with base features only
+                sequence = data[base_features].iloc[i-seq_length:i]
+                
+                # Verify sequence shape
+                if sequence.shape != (seq_length, len(base_features)):
+                    logger.warning(f"Invalid sequence shape: {sequence.shape}, expected {(seq_length, len(base_features))}")
+                    continue
+                
+                # Calculate target (next day's return)
+                next_return = (data['close'].iloc[i] - data['close'].iloc[i-1]) / data['close'].iloc[i-1]
+                
+                # Add to lists
+                X.append(sequence.values)
+                y.append(next_return)
+            
+            # Convert to numpy arrays
+            X = np.array(X)
+            y = np.array(y)
+            
+            logger.info(f"Created sequences: X shape={X.shape}, y shape={y.shape}")
+            return X, y
+            
+        except Exception as e:
+            logger.error(f"Failed to preprocess data for transformer: {str(e)}")
             raise 
