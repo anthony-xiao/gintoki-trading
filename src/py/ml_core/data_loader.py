@@ -103,6 +103,7 @@ class EnhancedDataLoader:
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate technical indicators for the dataset"""
+        logger = logging.getLogger("training")  # Initialize logger
         try:
             # Ensure we have enough data for calculations
             if len(df) < 26:  # Minimum required for MACD
