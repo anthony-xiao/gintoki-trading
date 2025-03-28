@@ -73,24 +73,28 @@ class AdaptiveEnsembleTrader:
             processed['volume_z'] = 1.0  # Use a neutral value instead of 0
             processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']  # Use actual spread ratio
         else:
-            # Define derived features
-            derived_features = ['returns', 'volatility', 'true_range', 'volume_z', 'spread_ratio']
+            # Use mid_price as close price if available, otherwise use close
+            price_col = 'mid_price' if 'mid_price' in processed.columns else 'close'
             
-            # Add derived features first with better NaN handling
-            # Calculate returns with forward fill for NaN values
-            processed['returns'] = processed['close'].pct_change()  # Use pct_change instead of log returns for better stability
-            processed['returns'] = processed['returns'].ffill()
+            # Calculate returns with proper handling of edge cases
+            processed['returns'] = processed[price_col].pct_change()
+            processed['returns'] = processed['returns'].replace([np.inf, -np.inf], np.nan)
+            processed['returns'] = processed['returns'].ffill().bfill()
             
-            # Calculate volatility with forward fill
-            processed['volatility'] = processed['returns'].rolling(20, min_periods=1).std()
-            processed['volatility'] = processed['volatility'].ffill()
+            # Calculate volatility with proper window
+            processed['volatility'] = processed['returns'].rolling(window=20, min_periods=1).std()
+            processed['volatility'] = processed['volatility'].replace([np.inf, -np.inf], np.nan)
+            processed['volatility'] = processed['volatility'].ffill().bfill()
             
-            # Calculate true range with forward fill
-            processed['true_range'] = self._true_range(processed)
-            processed['true_range'] = processed['true_range'].ffill()
+            # Calculate true range with proper handling of edge cases
+            high_low = processed['high'] - processed['low']
+            high_close = np.abs(processed['high'] - processed[price_col].shift())
+            low_close = np.abs(processed['low'] - processed[price_col].shift())
+            ranges = pd.concat([high_low, high_close, low_close], axis=1)
+            processed['true_range'] = np.max(ranges, axis=1)
+            processed['true_range'] = processed['true_range'].ffill().bfill()
             
             # Calculate volume_z with improved normalization
-            # First, calculate rolling statistics with a minimum number of periods
             volume_ma = processed['volume'].rolling(50, min_periods=1).mean()
             volume_std = processed['volume'].rolling(50, min_periods=1).std()
             
@@ -102,11 +106,12 @@ class AdaptiveEnsembleTrader:
             processed['volume_z'] = processed['volume_z'].clip(-5, 5)
             
             # Forward fill any remaining NaN values
-            processed['volume_z'] = processed['volume_z'].ffill()
+            processed['volume_z'] = processed['volume_z'].ffill().bfill()
             
-            # Calculate spread ratio with forward fill
-            processed['spread_ratio'] = processed['bid_ask_spread'] / processed['mid_price']
-            processed['spread_ratio'] = processed['spread_ratio'].ffill()
+            # Calculate spread ratio with proper handling of edge cases
+            processed['spread_ratio'] = processed['bid_ask_spread'] / processed[price_col]
+            processed['spread_ratio'] = processed['spread_ratio'].replace([np.inf, -np.inf], np.nan)
+            processed['spread_ratio'] = processed['spread_ratio'].ffill().bfill()
         
         # Log shape after adding derived features
         logger.info(f"Data shape after adding derived features: {processed.shape}")
