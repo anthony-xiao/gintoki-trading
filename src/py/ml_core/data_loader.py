@@ -327,7 +327,8 @@ class EnhancedDataLoader:
                     'bid_price': 'float32',
                     'ask_price': 'float32',
                     'bid_size': 'uint16',
-                    'ask_size': 'uint16'
+                    'ask_size': 'uint16',
+                    'sip_timestamp': 'int64'
                 }
 
                 OHLCV_DTYPES = {
@@ -339,16 +340,14 @@ class EnhancedDataLoader:
                     'vwap': 'float32'
                 }
 
-                # Maintain original validation logic
-                if 'aggregates' in key:
-                    required_columns = {'open', 'high', 'low', 'close', 'volume', 'vwap'}
-                    dtypes = OHLCV_DTYPES
-                elif 'quotes' in key:
-                    required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size'}
+                # Determine data type and required columns
+                is_quote_data = 'quotes' in key
+                if is_quote_data:
+                    required_columns = {'bid_price', 'ask_price', 'bid_size', 'ask_size', 'sip_timestamp'}
                     dtypes = ORDERBOOK_DTYPES
                 else:
-                    required_columns = set()
-                    dtypes = {}
+                    required_columns = {'open', 'high', 'low', 'close', 'volume', 'vwap'}
+                    dtypes = OHLCV_DTYPES
 
                 df = pd.read_parquet(bio)
                 if required_columns and not required_columns.issubset(df.columns):
@@ -371,7 +370,12 @@ class EnhancedDataLoader:
                 logger.info(f"Sample of loaded data from {key}:")
                 logger.info(f"Shape: {df.shape}")
                 logger.info(f"Columns: {df.columns.tolist()}")
-                logger.info(f"First 5 rows of close prices: {df['close'].head().values}")
+                if is_quote_data:
+                    logger.info(f"First 5 rows of bid/ask prices:")
+                    logger.info(f"  bid_price: {df['bid_price'].head().values}")
+                    logger.info(f"  ask_price: {df['ask_price'].head().values}")
+                else:
+                    logger.info(f"First 5 rows of close prices: {df['close'].head().values}")
                 
                 logger.info(f"✅ Loaded {len(df)} rows from {key}")
                 return df
@@ -404,7 +408,12 @@ class EnhancedDataLoader:
         logger.info("Sample of final data:")
         logger.info(f"Shape: {final_df.shape}")
         logger.info(f"Columns: {final_df.columns.tolist()}")
-        logger.info(f"First 5 rows of close prices: {final_df['close'].head().values}")
+        if 'close' in final_df.columns:
+            logger.info(f"First 5 rows of close prices: {final_df['close'].head().values}")
+        elif 'bid_price' in final_df.columns:
+            logger.info(f"First 5 rows of bid/ask prices:")
+            logger.info(f"  bid_price: {final_df['bid_price'].head().values}")
+            logger.info(f"  ask_price: {final_df['ask_price'].head().values}")
         
         return final_df
     
@@ -543,6 +552,15 @@ class EnhancedDataLoader:
                 bid_ask_spread=lambda x: x['ask_price'] - x['bid_price'],
                 mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
             ).dropna()
+            
+            # Log sample of processed quotes
+            logger.info("Sample of processed quotes:")
+            logger.info(f"Shape: {quotes_processed.shape}")
+            logger.info(f"Columns: {quotes_processed.columns.tolist()}")
+            logger.info(f"First 5 rows of bid/ask prices:")
+            logger.info(f"  bid_price: {quotes_processed['bid_price'].head().values}")
+            logger.info(f"  ask_price: {quotes_processed['ask_price'].head().values}")
+            logger.info(f"  spread: {quotes_processed['bid_ask_spread'].head().values}")
             
             logger.info(f"✅ Processed {len(quotes_processed)} quote bars")
             return quotes_processed
