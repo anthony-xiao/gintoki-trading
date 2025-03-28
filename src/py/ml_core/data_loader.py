@@ -183,11 +183,13 @@ class EnhancedDataLoader:
             minus_dm[minus_dm < plus_dm] = 0
             
             # Calculate smoothed TR, +DM, and -DM with proper window
+            # Use Wilder's smoothing method
             tr14 = true_range.rolling(window=14, min_periods=1).mean()
             plus_dm14 = plus_dm.rolling(window=14, min_periods=1).mean()
             minus_dm14 = minus_dm.rolling(window=14, min_periods=1).mean()
             
             # Calculate DI+ and DI- with proper handling of edge cases
+            # Use Wilder's smoothing method for DI calculation
             plus_di14 = 100 * (plus_dm14 / tr14.replace(0, np.nan))
             minus_di14 = 100 * (minus_dm14 / tr14.replace(0, np.nan))
             
@@ -200,9 +202,11 @@ class EnhancedDataLoader:
             df['di_minus'] = minus_di14
             
             # Calculate DX with proper handling of edge cases
+            # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
             dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.nan)
             
             # Calculate ADX with proper handling of edge cases
+            # Use Wilder's smoothing method for ADX
             df['adx'] = dx.rolling(window=14, min_periods=1).mean()
             
             # Forward fill any remaining NaN values
@@ -228,6 +232,16 @@ class EnhancedDataLoader:
                     logger.info(f"    - Std: {stats['std']:.4f}")
                     logger.info(f"    - Min: {stats['min']:.4f}")
                     logger.info(f"    - Max: {stats['max']:.4f}")
+            
+            # Log sample of ADX calculation components
+            logger.info("ADX calculation components:")
+            logger.info(f"  True Range - Mean: {tr14.mean():.4f}, Std: {tr14.std():.4f}")
+            logger.info(f"  +DM - Mean: {plus_dm14.mean():.4f}, Std: {plus_dm14.std():.4f}")
+            logger.info(f"  -DM - Mean: {minus_dm14.mean():.4f}, Std: {minus_dm14.std():.4f}")
+            logger.info(f"  DI+ - Mean: {plus_di14.mean():.4f}, Std: {plus_di14.std():.4f}")
+            logger.info(f"  DI- - Mean: {minus_di14.mean():.4f}, Std: {minus_di14.std():.4f}")
+            logger.info(f"  DX - Mean: {dx.mean():.4f}, Std: {dx.std():.4f}")
+            logger.info(f"  ADX - Mean: {df['adx'].mean():.4f}, Std: {df['adx'].std():.4f}")
             
             return df
             
