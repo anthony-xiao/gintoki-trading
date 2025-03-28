@@ -95,11 +95,16 @@ class AdaptiveEnsembleTrader:
             processed['true_range'] = processed['true_range'].ffill().bfill()
             
             # Calculate volume_z with improved normalization
-            volume_ma = processed['volume'].rolling(50, min_periods=1).mean()
-            volume_std = processed['volume'].rolling(50, min_periods=1).std()
+            # First ensure volume is not zero or negative
+            processed['volume'] = processed['volume'].replace(0, np.nan)
+            processed['volume'] = processed['volume'].fillna(processed['volume'].mean())
             
-            # Add a small constant to avoid division by zero, but make it relative to the mean
-            epsilon = volume_ma * 1e-6  # Scale epsilon with the mean volume
+            # Calculate rolling statistics with a minimum number of periods
+            volume_ma = processed['volume'].rolling(window=50, min_periods=1).mean()
+            volume_std = processed['volume'].rolling(window=50, min_periods=1).std()
+            
+            # Add a small constant to avoid division by zero
+            epsilon = volume_ma * 1e-6
             processed['volume_z'] = (processed['volume'] - volume_ma) / (volume_std + epsilon)
             
             # Clip extreme values to prevent outliers
