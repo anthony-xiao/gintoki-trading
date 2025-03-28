@@ -182,10 +182,18 @@ class EnhancedDataLoader:
             # If -DM is less than +DM, -DM becomes zero
             minus_dm[minus_dm < plus_dm] = 0
             
-            # Calculate smoothed TR, +DM, and -DM
+            # Calculate smoothed TR, +DM, and -DM with proper window
             tr14 = true_range.rolling(window=14, min_periods=1).mean()
-            plus_di14 = 100 * (plus_dm.rolling(window=14, min_periods=1).mean() / tr14)
-            minus_di14 = 100 * (minus_dm.rolling(window=14, min_periods=1).mean() / tr14)
+            plus_dm14 = plus_dm.rolling(window=14, min_periods=1).mean()
+            minus_dm14 = minus_dm.rolling(window=14, min_periods=1).mean()
+            
+            # Calculate DI+ and DI- with proper handling of edge cases
+            plus_di14 = 100 * (plus_dm14 / tr14.replace(0, np.nan))
+            minus_di14 = 100 * (minus_dm14 / tr14.replace(0, np.nan))
+            
+            # Forward fill any NaN values in DI+ and DI-
+            plus_di14 = plus_di14.fillna(method='ffill')
+            minus_di14 = minus_di14.fillna(method='ffill')
             
             # Calculate DI+ and DI-
             df['di_plus'] = plus_di14
