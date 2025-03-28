@@ -162,30 +162,40 @@ class EnhancedDataLoader:
             df['obv'] = (np.sign(df[price_col].diff()) * df['volume']).fillna(0).cumsum()
             
             # Calculate ADX and DI with proper handling of edge cases
+            # First calculate True Range
             high_low = df['high'] - df['low']
             high_close = np.abs(df['high'] - df[price_col].shift())
             low_close = np.abs(df['low'] - df[price_col].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
-            atr = true_range.rolling(14, min_periods=1).mean()
             
-            # Calculate +DM and -DM with proper handling of edge cases
+            # Calculate +DM and -DM
             plus_dm = df['high'].diff()
-            minus_dm = df['low'].diff()
+            minus_dm = -df['low'].diff()
+            
+            # Ensure +DM and -DM are non-negative
             plus_dm[plus_dm < 0] = 0
-            minus_dm[minus_dm > 0] = 0
+            minus_dm[minus_dm < 0] = 0
             
-            # Calculate smoothed TR, +DM, and -DM with proper handling of edge cases
-            tr14 = atr.replace(0, np.nan)  # Avoid division by zero
-            plus_di14 = 100 * (plus_dm.rolling(14, min_periods=1).mean() / tr14)
-            minus_di14 = 100 * (minus_dm.rolling(14, min_periods=1).mean() / tr14)
+            # If +DM is less than -DM, +DM becomes zero
+            plus_dm[plus_dm < minus_dm] = 0
+            # If -DM is less than +DM, -DM becomes zero
+            minus_dm[minus_dm < plus_dm] = 0
             
-            df['di_plus'] = plus_di14.replace([np.inf, -np.inf], np.nan).ffill().bfill()
-            df['di_minus'] = minus_di14.replace([np.inf, -np.inf], np.nan).ffill().bfill()
+            # Calculate smoothed TR, +DM, and -DM
+            tr14 = true_range.rolling(window=14, min_periods=1).mean()
+            plus_di14 = 100 * (plus_dm.rolling(window=14, min_periods=1).mean() / tr14)
+            minus_di14 = 100 * (minus_dm.rolling(window=14, min_periods=1).mean() / tr14)
             
-            # Calculate ADX with proper handling of edge cases
+            # Calculate DI+ and DI-
+            df['di_plus'] = plus_di14
+            df['di_minus'] = minus_di14
+            
+            # Calculate DX
             dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.nan)
-            df['adx'] = dx.rolling(14, min_periods=1).mean()
+            
+            # Calculate ADX
+            df['adx'] = dx.rolling(window=14, min_periods=1).mean()
             
             # Forward fill any remaining NaN values
             df = df.ffill()

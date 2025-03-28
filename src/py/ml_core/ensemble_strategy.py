@@ -113,6 +113,18 @@ class AdaptiveEnsembleTrader:
             # Forward fill any remaining NaN values
             processed['volume_z'] = processed['volume_z'].ffill().bfill()
             
+            # Validate volume_z calculation
+            if processed['volume_z'].isna().any():
+                logger.warning("NaN values found in volume_z after calculation")
+                processed['volume_z'] = processed['volume_z'].fillna(0)
+            
+            # Log volume statistics for debugging
+            logger.info("Volume statistics:")
+            logger.info(f"  Raw volume - Mean: {processed['volume'].mean():.2f}, Std: {processed['volume'].std():.2f}")
+            logger.info(f"  Volume MA - Mean: {volume_ma.mean():.2f}, Std: {volume_ma.std():.2f}")
+            logger.info(f"  Volume Std - Mean: {volume_std.mean():.2f}, Std: {volume_std.std():.2f}")
+            logger.info(f"  Volume Z - Mean: {processed['volume_z'].mean():.2f}, Std: {processed['volume_z'].std():.2f}")
+            
             # Calculate spread ratio with proper handling of edge cases
             processed['spread_ratio'] = processed['bid_ask_spread'] / processed[price_col]
             processed['spread_ratio'] = processed['spread_ratio'].replace([np.inf, -np.inf], np.nan)
