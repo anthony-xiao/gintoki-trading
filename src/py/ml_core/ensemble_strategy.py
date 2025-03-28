@@ -125,6 +125,17 @@ class AdaptiveEnsembleTrader:
             logger.info(f"  Volume Std - Mean: {volume_std.mean():.2f}, Std: {volume_std.std():.2f}")
             logger.info(f"  Volume Z - Mean: {processed['volume_z'].mean():.2f}, Std: {processed['volume_z'].std():.2f}")
             
+            # Verify volume_z is not all zeros
+            if (processed['volume_z'] == 0).all():
+                logger.warning("All volume_z values are zero - recalculating with adjusted parameters")
+                # Recalculate with adjusted parameters
+                volume_ma = processed['volume'].rolling(window=20, min_periods=1).mean()
+                volume_std = processed['volume'].rolling(window=20, min_periods=1).std()
+                epsilon = volume_ma * 1e-4  # Increased epsilon
+                processed['volume_z'] = (processed['volume'] - volume_ma) / (volume_std + epsilon)
+                processed['volume_z'] = processed['volume_z'].clip(-5, 5)
+                processed['volume_z'] = processed['volume_z'].ffill().bfill()
+            
             # Calculate spread ratio with proper handling of edge cases
             processed['spread_ratio'] = processed['bid_ask_spread'] / processed[price_col]
             processed['spread_ratio'] = processed['spread_ratio'].replace([np.inf, -np.inf], np.nan)

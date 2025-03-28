@@ -191,10 +191,10 @@ class EnhancedDataLoader:
             df['di_plus'] = plus_di14
             df['di_minus'] = minus_di14
             
-            # Calculate DX
+            # Calculate DX with proper handling of edge cases
             dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.nan)
             
-            # Calculate ADX
+            # Calculate ADX with proper handling of edge cases
             df['adx'] = dx.rolling(window=14, min_periods=1).mean()
             
             # Forward fill any remaining NaN values
