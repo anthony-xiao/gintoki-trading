@@ -261,6 +261,13 @@ class EnhancedDataLoader:
         logger.info(f" - Rows: {len(merged)}")
         logger.info(f" - NaNs: {merged.isna().sum().sum()}")
         logger.info(f" - Date range: {merged.index.min()} to {merged.index.max()}")
+        
+        # Log sample of technical indicators
+        logger.info("Sample of technical indicators:")
+        for col in ['returns', 'volatility', 'rsi', 'macd', 'atr', 'adx']:
+            if col in merged.columns:
+                sample = merged[col].head(5)
+                logger.info(f"  {col}: {sample.values}")
 
         # Create default spread and mid_price columns if missing
         if 'bid_ask_spread' not in merged:
@@ -360,6 +367,12 @@ class EnhancedDataLoader:
                         # If that fails, try to parse the index directly
                         df.index = pd.to_datetime(df.index)
                 
+                # Log sample of loaded data
+                logger.info(f"Sample of loaded data from {key}:")
+                logger.info(f"Shape: {df.shape}")
+                logger.info(f"Columns: {df.columns.tolist()}")
+                logger.info(f"First 5 rows of close prices: {df['close'].head().values}")
+                
                 logger.info(f"✅ Loaded {len(df)} rows from {key}")
                 return df
                 
@@ -386,6 +399,13 @@ class EnhancedDataLoader:
             
         final_df = pd.concat(dfs, ignore_index=False).sort_index()
         logger.info(f"✅ Loaded {len(final_df)} total records")
+        
+        # Log sample of final data
+        logger.info("Sample of final data:")
+        logger.info(f"Shape: {final_df.shape}")
+        logger.info(f"Columns: {final_df.columns.tolist()}")
+        logger.info(f"First 5 rows of close prices: {final_df['close'].head().values}")
+        
         return final_df
     
     def create_tf_dataset(self, data: pd.DataFrame, window: int = 60) -> tf.data.Dataset:
