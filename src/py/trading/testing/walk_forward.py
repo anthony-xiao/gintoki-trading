@@ -313,6 +313,11 @@ class WalkForwardTester:
             # Get volatility from data
             volatility = data['volatility'].iloc[-1]
             
+            # Handle edge cases
+            if volatility <= 0 or abs(signal) <= 0:
+                logger.warning(f"Invalid volatility ({volatility}) or signal ({signal}) for position sizing")
+                return 0.0
+            
             # Calculate base position size (risk-adjusted)
             risk_amount = self.config.get('initial_capital', 100000.0) * self.config.get('risk_per_trade', 0.02)
             base_size = risk_amount / (volatility * abs(signal))
@@ -327,11 +332,12 @@ class WalkForwardTester:
             # Apply limits
             position_size = np.clip(position_size, min_position, max_position)
             
+            logger.info(f"Position sizing: volatility={volatility:.4f}, signal={signal:.4f}, size={position_size:.4f}")
             return position_size
             
         except Exception as e:
             logger.error(f"Failed to calculate position size: {str(e)}")
-            raise
+            return 0.0  # Return 0 position size on error
             
     def _aggregate_results(self, results: List[Dict]) -> Dict:
         """Aggregate results from all walk-forward iterations"""
