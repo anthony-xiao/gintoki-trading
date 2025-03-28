@@ -170,21 +170,20 @@ class EnhancedDataLoader:
             true_range = np.max(ranges, axis=1)
             
             # Calculate +DM and -DM with proper price movement detection
-            high_diff = df['high'].diff()
-            low_diff = -df['low'].diff()  # Negative because we want positive values for downward movement
+            high_diff = df['high'] - df['high'].shift(1)
+            low_diff = df['low'].shift(1) - df['low']
             
             # Initialize +DM and -DM
             plus_dm = pd.Series(0.0, index=df.index)
             minus_dm = pd.Series(0.0, index=df.index)
             
-            # Calculate +DM
+            # Calculate +DM and -DM according to Wilder's method
             plus_dm = np.where(
                 (high_diff > low_diff) & (high_diff > 0),
                 high_diff,
                 0
             )
             
-            # Calculate -DM
             minus_dm = np.where(
                 (low_diff > high_diff) & (low_diff > 0),
                 low_diff,
@@ -195,14 +194,29 @@ class EnhancedDataLoader:
             plus_dm = pd.Series(plus_dm, index=df.index)
             minus_dm = pd.Series(minus_dm, index=df.index)
             
-            # Calculate smoothed TR, +DM, and -DM with proper window
-            # Use Wilder's smoothing method
-            tr14 = true_range.rolling(window=14, min_periods=1).mean()
-            plus_dm14 = plus_dm.rolling(window=14, min_periods=1).mean()
-            minus_dm14 = minus_dm.rolling(window=14, min_periods=1).mean()
+            # Calculate smoothed TR, +DM, and -DM using Wilder's smoothing method
+            # First period uses simple average
+            tr14 = pd.Series(index=df.index)
+            plus_dm14 = pd.Series(index=df.index)
+            minus_dm14 = pd.Series(index=df.index)
+            
+            # First period uses simple average
+            tr14.iloc[13] = true_range.iloc[:14].mean()
+            plus_dm14.iloc[13] = plus_dm.iloc[:14].mean()
+            minus_dm14.iloc[13] = minus_dm.iloc[:14].mean()
+            
+            # Subsequent periods use Wilder's smoothing method
+            for i in range(14, len(df)):
+                tr14.iloc[i] = tr14.iloc[i-1] - (tr14.iloc[i-1] / 14) + true_range.iloc[i]
+                plus_dm14.iloc[i] = plus_dm14.iloc[i-1] - (plus_dm14.iloc[i-1] / 14) + plus_dm.iloc[i]
+                minus_dm14.iloc[i] = minus_dm14.iloc[i-1] - (minus_dm14.iloc[i-1] / 14) + minus_dm.iloc[i]
+            
+            # Forward fill any NaN values at the start
+            tr14 = tr14.ffill()
+            plus_dm14 = plus_dm14.ffill()
+            minus_dm14 = minus_dm14.ffill()
             
             # Calculate DI+ and DI- with proper handling of edge cases
-            # Use Wilder's smoothing method for DI calculation
             plus_di14 = 100 * (plus_dm14 / tr14.replace(0, np.nan))
             minus_di14 = 100 * (minus_dm14 / tr14.replace(0, np.nan))
             
@@ -218,9 +232,20 @@ class EnhancedDataLoader:
             # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
             dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14).replace(0, np.nan)
             
-            # Calculate ADX with proper handling of edge cases
-            # Use Wilder's smoothing method for ADX
-            df['adx'] = dx.rolling(window=14, min_periods=1).mean()
+            # Calculate ADX using Wilder's smoothing method
+            # First period uses simple average
+            adx = pd.Series(index=df.index)
+            adx.iloc[13] = dx.iloc[:14].mean()
+            
+            # Subsequent periods use Wilder's smoothing method
+            for i in range(14, len(df)):
+                adx.iloc[i] = adx.iloc[i-1] - (adx.iloc[i-1] / 14) + dx.iloc[i]
+            
+            # Forward fill any NaN values at the start
+            adx = adx.ffill()
+            
+            # Store ADX in the dataframe
+            df['adx'] = adx
             
             # Forward fill any remaining NaN values
             df = df.ffill()
