@@ -170,8 +170,9 @@ class EnhancedDataLoader:
             true_range = np.max(ranges, axis=1)
             
             # Calculate +DM and -DM with proper price movement detection
-            high_diff = df['high'] - df['high'].shift(1)
-            low_diff = df['low'].shift(1) - df['low']
+            # Use forward fill to handle NaN values in the first row
+            high_diff = df['high'].diff().fillna(0)
+            low_diff = -df['low'].diff().fillna(0)  # Negative because we want previous low - current low
             
             # Initialize +DM and -DM
             plus_dm = pd.Series(0.0, index=df.index)
