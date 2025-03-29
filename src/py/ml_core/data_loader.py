@@ -201,19 +201,21 @@ class EnhancedDataLoader:
             bb_period = 20
             bb_std = 2.0
             
+            # Initialize with first value to avoid NaN
+            df['bb_middle'] = df['close'].iloc[0]
+            df['bb_std'] = 0.0
+            df['bb_upper'] = df['bb_middle']
+            df['bb_lower'] = df['bb_middle']
+            
             # Calculate rolling mean and std with proper window
-            df['bb_middle'] = df['close'].rolling(window=bb_period, min_periods=1).mean()
-            df['bb_std'] = df['close'].rolling(window=bb_period, min_periods=1).std()
+            rolling_mean = df['close'].rolling(window=bb_period, min_periods=1).mean()
+            rolling_std = df['close'].rolling(window=bb_period, min_periods=1).std()
             
-            # Calculate upper and lower bands
-            df['bb_upper'] = df['bb_middle'] + (bb_std * df['bb_std'])
-            df['bb_lower'] = df['bb_middle'] - (bb_std * df['bb_std'])
-            
-            # Forward fill NaN values at the start
-            df['bb_middle'] = df['bb_middle'].ffill()
-            df['bb_std'] = df['bb_std'].ffill()
-            df['bb_upper'] = df['bb_upper'].ffill()
-            df['bb_lower'] = df['bb_lower'].ffill()
+            # Update values after initialization
+            df.loc[1:, 'bb_middle'] = rolling_mean[1:]
+            df.loc[1:, 'bb_std'] = rolling_std[1:]
+            df.loc[1:, 'bb_upper'] = df.loc[1:, 'bb_middle'] + (bb_std * df.loc[1:, 'bb_std'])
+            df.loc[1:, 'bb_lower'] = df.loc[1:, 'bb_middle'] - (bb_std * df.loc[1:, 'bb_std'])
             
             # Log Bollinger Bands calculations
             logger.info("\nBollinger Bands calculation details:")
@@ -388,12 +390,12 @@ class EnhancedDataLoader:
             # Calculate ADX using Wilder's smoothing method
             adx = dx.copy()
             
-            # Initialize first 14 periods with simple average
+            # Initialize first 14 periods with progressive means
             for i in range(14):
-                if i < 14:
-                    adx.iloc[i] = dx.iloc[0:i+1].mean()
+                if i == 0:
+                    adx.iloc[i] = dx.iloc[0]
                 else:
-                    adx.iloc[i] = dx.iloc[0:14].mean()
+                    adx.iloc[i] = dx.iloc[0:i+1].mean()
             
             # Subsequent periods use Wilder's smoothing
             for i in range(14, len(dx)):
