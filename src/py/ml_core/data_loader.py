@@ -354,7 +354,7 @@ class EnhancedDataLoader:
             # Log smoothed values
             logger.info("\nSmoothed values:")
             logger.info(f"Sample of smoothed calculations:")
-            sample_idx = df.index[period-1]  # Use first complete period
+            sample_idx = df.index[13]  # Use first complete period (index 13 for 14-period)
             logger.info(f"  TR14: {tr14[sample_idx]:.4f}")
             logger.info(f"  +DM14: {plus_dm14[sample_idx]:.4f}")
             logger.info(f"  -DM14: {minus_dm14[sample_idx]:.4f}")
@@ -372,7 +372,7 @@ class EnhancedDataLoader:
             
             # Calculate DX and ADX
             dx = 100 * abs(di_plus - di_minus) / (di_plus + di_minus + epsilon)
-            adx = dx.rolling(window=period).mean()
+            adx = dx.rolling(window=14).mean()  # Use 14-period window for ADX
             
             # Log DX and ADX calculations
             logger.info("\nDX and ADX calculations:")
@@ -386,6 +386,11 @@ class EnhancedDataLoader:
             if not adx_valid:
                 logger.warning("Invalid ADX values detected!")
                 logger.info(adx.head())
+            
+            # Store the calculated values in the DataFrame
+            df['di_plus'] = di_plus
+            df['di_minus'] = di_minus
+            df['adx'] = adx
             
             # Forward fill any remaining NaN values
             df = df.ffill()
