@@ -102,281 +102,147 @@ class EnhancedDataLoader:
         return {ticker: group for ticker, group in all_actions.groupby('symbol')}
 
     def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate technical indicators for the dataset"""
-        logger = logging.getLogger("training")  # Initialize logger
-        try:
-            # Ensure we have enough data for calculations
-            if len(df) < 26:  # Minimum required for MACD
-                logger.warning(f"Insufficient data for technical indicators: {len(df)} rows")
-                return df
-            
-            # Use mid_price as close price if available, otherwise use close
-            price_col = 'mid_price' if 'mid_price' in df.columns else 'close'
-            
-            # Validate price data
-            logger.info("Validating price data...")
-            df['high'] = df[['high', price_col]].max(axis=1)
-            df['low'] = df[['low', price_col]].min(axis=1)
-            
-            # Log price validation results
-            high_low_valid = (df['high'] >= df['low']).all()
-            close_in_range = ((df[price_col] >= df['low']) & (df[price_col] <= df['high'])).all()
-            logger.info(f"Price validation results:")
-            logger.info(f"  High >= Low: {high_low_valid}")
-            logger.info(f"  Close between High/Low: {close_in_range}")
-            
-            if not high_low_valid or not close_in_range:
-                logger.warning("Price data validation failed!")
-                logger.info("Sample of invalid prices:")
-                invalid_mask = ~((df['high'] >= df['low']) & (df[price_col] >= df['low']) & (df[price_col] <= df['high']))
-                logger.info(df[invalid_mask][['high', 'low', price_col]].head())
-            
-            # Ensure prices are valid
-            if df[price_col].isna().any() or (df[price_col] == 0).any():
-                logger.warning(f"Invalid {price_col} prices detected, filling with forward/backward fill")
-                df[price_col] = df[price_col].replace(0, np.nan).ffill().bfill()
-            
-            # Log price statistics
-            logger.info("Price statistics:")
-            for col in ['high', 'low', price_col]:
-                stats = df[col].describe()
-                logger.info(f"  {col}:")
-                logger.info(f"    - Mean: {stats['mean']:.4f}")
-                logger.info(f"    - Std: {stats['std']:.4f}")
-                logger.info(f"    - Min: {stats['min']:.4f}")
-                logger.info(f"    - Max: {stats['max']:.4f}")
-            
-            # Calculate returns with proper handling of edge cases
-            df['returns'] = df[price_col].pct_change()
-            df['returns'] = df['returns'].replace([np.inf, -np.inf], np.nan)
-            df['returns'] = df['returns'].ffill().bfill()
-            
-            # Log returns statistics
-            logger.info("Returns statistics:")
-            stats = df['returns'].describe()
-            logger.info(f"  Mean: {stats['mean']:.4f}")
-            logger.info(f"  Std: {stats['std']:.4f}")
-            logger.info(f"  Min: {stats['min']:.4f}")
-            logger.info(f"  Max: {stats['max']:.4f}")
-            
-            # Calculate volatility with proper window
-            df['volatility'] = df['returns'].rolling(window=20, min_periods=1).std()
-            df['volatility'] = df['volatility'].replace([np.inf, -np.inf], np.nan)
-            df['volatility'] = df['volatility'].ffill().bfill()
-            
-            # Calculate RSI with proper handling of edge cases
-            delta = df[price_col].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
-            rs = gain / loss.replace(0, np.nan)  # Avoid division by zero
-            df['rsi'] = 100 - (100 / (1 + rs))
-            df['rsi'] = df['rsi'].replace([np.inf, -np.inf], np.nan)
-            df['rsi'] = df['rsi'].ffill().bfill()
-            
-            # Validate RSI range
-            rsi_valid = ((df['rsi'] >= 0) & (df['rsi'] <= 100)).all()
-            logger.info(f"RSI validation: {rsi_valid}")
-            if not rsi_valid:
-                logger.warning("Invalid RSI values detected!")
-                logger.info(df[~((df['rsi'] >= 0) & (df['rsi'] <= 100))]['rsi'].head())
-            
-            # Calculate MACD with proper handling of edge cases
-            exp1 = df[price_col].ewm(span=12, adjust=False, min_periods=1).mean()
-            exp2 = df[price_col].ewm(span=26, adjust=False, min_periods=1).mean()
-            df['macd'] = exp1 - exp2
-            df['macd_signal'] = df['macd'].ewm(span=9, adjust=False, min_periods=1).mean()
-            df['macd_hist'] = df['macd'] - df['macd_signal']
-            
-            # Log MACD statistics
-            logger.info("MACD statistics:")
-            for col in ['macd', 'macd_signal', 'macd_hist']:
-                stats = df[col].describe()
-                logger.info(f"  {col}:")
-                logger.info(f"    - Mean: {stats['mean']:.4f}")
-                logger.info(f"    - Std: {stats['std']:.4f}")
-                logger.info(f"    - Min: {stats['min']:.4f}")
-                logger.info(f"    - Max: {stats['max']:.4f}")
-            
-            # Calculate Bollinger Bands with proper handling of edge cases
-            df['bb_middle'] = df[price_col].rolling(window=20, min_periods=1).mean()
-            bb_std = df[price_col].rolling(window=20, min_periods=1).std()
-            df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
-            df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
-            
-            # Validate Bollinger Bands
-            bb_valid = (df['bb_upper'] >= df['bb_middle']).all() and (df['bb_middle'] >= df['bb_lower']).all()
-            logger.info(f"Bollinger Bands validation: {bb_valid}")
-            if not bb_valid:
-                logger.warning("Invalid Bollinger Bands detected!")
-                logger.info(df[~(df['bb_upper'] >= df['bb_middle'])][['bb_upper', 'bb_middle', 'bb_lower']].head())
-            
-            # Calculate ATR with proper handling of edge cases
-            high_low = df['high'] - df['low']
-            high_close = np.abs(df['high'] - df[price_col].shift())
-            low_close = np.abs(df['low'] - df[price_col].shift())
-            ranges = pd.concat([high_low, high_close, low_close], axis=1)
-            true_range = np.max(ranges, axis=1)
-            df['atr'] = true_range.rolling(14, min_periods=1).mean()
-            
-            # Log ATR statistics
-            logger.info("ATR statistics:")
-            stats = df['atr'].describe()
-            logger.info(f"  Mean: {stats['mean']:.4f}")
-            logger.info(f"  Std: {stats['std']:.4f}")
-            logger.info(f"  Min: {stats['min']:.4f}")
-            logger.info(f"  Max: {stats['max']:.4f}")
-            
-            # Calculate OBV with proper handling of edge cases
-            df['obv'] = (np.sign(df[price_col].diff()) * df['volume']).fillna(0).cumsum()
-            
-            # Log OBV statistics
-            logger.info("OBV statistics:")
-            stats = df['obv'].describe()
-            logger.info(f"  Mean: {stats['mean']:.4f}")
-            logger.info(f"  Std: {stats['std']:.4f}")
-            logger.info(f"  Min: {stats['min']:.4f}")
-            logger.info(f"  Max: {stats['max']:.4f}")
-            
-            # Calculate ADX and DI with proper handling of edge cases
-            # First calculate True Range using bid/ask prices
-            high_low = df['ask_price'] - df['bid_price']  # Use bid/ask spread
-            high_close = np.abs(df['ask_price'] - df['bid_price'].shift())
-            low_close = np.abs(df['bid_price'] - df['ask_price'].shift())
-            ranges = pd.concat([high_low, high_close, low_close], axis=1)
-            true_range = np.max(ranges, axis=1)
-            
-            # Calculate +DM and -DM with proper price movement detection
-            # Calculate high and low differences using bid/ask prices
-            high_diff = df['ask_price'] - df['ask_price'].shift(1)  # Current ask - previous ask
-            low_diff = df['bid_price'].shift(1) - df['bid_price']  # Previous bid - current bid
-            
-            # Fill NaN values with 0 for the first row
-            high_diff = high_diff.fillna(0)
-            low_diff = low_diff.fillna(0)
-            
-            # Initialize +DM and -DM
-            plus_dm = pd.Series(0.0, index=df.index)
-            minus_dm = pd.Series(0.0, index=df.index)
-            
-            # Calculate +DM and -DM according to Wilder's method
-            # +DM is the current ask minus the previous ask
-            # -DM is the previous bid minus the current bid
-            # Only count the larger of the two movements if they're in opposite directions
-            plus_dm = np.where(
-                (high_diff > low_diff) & (high_diff > 0),
-                high_diff,
-                0
-            )
-            
-            minus_dm = np.where(
-                (low_diff > high_diff) & (low_diff > 0),
-                low_diff,
-                0
-            )
-            
-            # Convert to Series
-            plus_dm = pd.Series(plus_dm, index=df.index)
-            minus_dm = pd.Series(minus_dm, index=df.index)
-            
-            # Log DM statistics
-            logger.info("Directional Movement statistics:")
-            logger.info(f"  +DM - Mean: {plus_dm.mean():.4f}, Std: {plus_dm.std():.4f}")
-            logger.info(f"  -DM - Mean: {minus_dm.mean():.4f}, Std: {minus_dm.std():.4f}")
-            
-            # Calculate smoothed TR, +DM, and -DM using Wilder's smoothing method
-            # First period uses simple average
-            tr14 = pd.Series(index=df.index)
-            plus_dm14 = pd.Series(index=df.index)
-            minus_dm14 = pd.Series(index=df.index)
-            
-            # First period uses simple average
-            tr14.iloc[13] = true_range.iloc[:14].mean()
-            plus_dm14.iloc[13] = plus_dm.iloc[:14].mean()
-            minus_dm14.iloc[13] = minus_dm.iloc[:14].mean()
-            
-            # Subsequent periods use Wilder's smoothing method
-            for i in range(14, len(df)):
-                tr14.iloc[i] = tr14.iloc[i-1] - (tr14.iloc[i-1] / 14) + true_range.iloc[i]
-                plus_dm14.iloc[i] = plus_dm14.iloc[i-1] - (plus_dm14.iloc[i-1] / 14) + plus_dm.iloc[i]
-                minus_dm14.iloc[i] = minus_dm14.iloc[i-1] - (minus_dm14.iloc[i-1] / 14) + minus_dm.iloc[i]
-            
-            # Forward fill any NaN values at the start
-            tr14 = tr14.ffill()
-            plus_dm14 = plus_dm14.ffill()
-            minus_dm14 = minus_dm14.ffill()
-            
-            # Calculate DI+ and DI- with proper handling of edge cases
-            # Add a small constant to avoid division by zero
-            epsilon = 1e-8
-            plus_di14 = 100 * (plus_dm14 / (tr14 + epsilon))
-            minus_di14 = 100 * (minus_dm14 / (tr14 + epsilon))
-            
-            # Forward fill any NaN values in DI+ and DI-
-            plus_di14 = plus_di14.ffill()
-            minus_di14 = minus_di14.ffill()
-            
-            # Log DI statistics
-            logger.info("Directional Indicator statistics:")
-            logger.info(f"  DI+ - Mean: {plus_di14.mean():.4f}, Std: {plus_di14.std():.4f}")
-            logger.info(f"  DI- - Mean: {minus_di14.mean():.4f}, Std: {minus_di14.std():.4f}")
-            
-            # Calculate DX with proper handling of edge cases
-            # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
-            # Add a small constant to avoid division by zero
-            dx = 100 * np.abs(plus_di14 - minus_di14) / (plus_di14 + minus_di14 + epsilon)
-            
-            # Calculate ADX using Wilder's smoothing method
-            # First period uses simple average
-            adx = pd.Series(index=df.index)
-            adx.iloc[13] = dx.iloc[:14].mean()
-            
-            # Subsequent periods use Wilder's smoothing method
-            for i in range(14, len(df)):
-                # Wilder's smoothing formula: ADX = ((prior ADX * 13) + current DX) / 14
-                adx.iloc[i] = ((adx.iloc[i-1] * 13) + dx.iloc[i]) / 14
-            
-            # Forward fill any NaN values at the start
-            adx = adx.ffill()
-            
-            # Store ADX in the dataframe
-            df['adx'] = adx
-            
-            # Validate ADX range
-            adx_valid = ((df['adx'] >= 0) & (df['adx'] <= 100)).all()
-            logger.info(f"ADX validation: {adx_valid}")
-            if not adx_valid:
-                logger.warning("Invalid ADX values detected!")
-                logger.info(df[~((df['adx'] >= 0) & (df['adx'] <= 100))]['adx'].head())
-            
-            # Forward fill any remaining NaN values
-            df = df.ffill()
-            
-            # Backward fill any remaining NaN values at the start
-            df = df.bfill()
-            
-            # Verify no NaN values remain
-            if df.isna().any().any():
-                nan_cols = df.columns[df.isna().any()].tolist()
-                logger.warning(f"NaN values remain in columns: {nan_cols}")
-                # Fill any remaining NaNs with 0
-                df = df.fillna(0)
-            
-            # Log final statistics
-            logger.info("Final technical indicator statistics:")
-            for col in ['returns', 'volatility', 'rsi', 'macd', 'atr', 'adx']:
-                if col in df.columns:
-                    stats = df[col].describe()
-                    logger.info(f"  {col}:")
-                    logger.info(f"    - Mean: {stats['mean']:.4f}")
-                    logger.info(f"    - Std: {stats['std']:.4f}")
-                    logger.info(f"    - Min: {stats['min']:.4f}")
-                    logger.info(f"    - Max: {stats['max']:.4f}")
-            
-            return df
-            
-        except Exception as e:
-            logger.error(f"Error calculating technical indicators: {str(e)}")
-            return df
+        """Calculate technical indicators with proper handling of NaN values"""
+        logger = logging.getLogger("training")
+        df = df.copy()
+        
+        # Calculate returns with proper handling of edge cases
+        df['returns'] = df['close'].pct_change()
+        df['returns'] = df['returns'].replace([np.inf, -np.inf], np.nan)
+        df['returns'] = df['returns'].ffill().bfill()
+        
+        # Calculate volatility with proper window
+        df['volatility'] = df['returns'].rolling(window=20, min_periods=1).std()
+        df['volatility'] = df['volatility'].replace([np.inf, -np.inf], np.nan)
+        df['volatility'] = df['volatility'].ffill().bfill()
+        
+        # Calculate RSI with proper handling of edge cases
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14, min_periods=1).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14, min_periods=1).mean()
+        rs = gain / loss
+        df['rsi'] = 100 - (100 / (1 + rs))
+        df['rsi'] = df['rsi'].replace([np.inf, -np.inf], np.nan)
+        df['rsi'] = df['rsi'].ffill().bfill()
+        
+        # Calculate MACD with proper handling of edge cases
+        exp1 = df['close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['close'].ewm(span=26, adjust=False).mean()
+        df['macd'] = exp1 - exp2
+        df['macd'] = df['macd'].replace([np.inf, -np.inf], np.nan)
+        df['macd'] = df['macd'].ffill().bfill()
+        
+        # Calculate Bollinger Bands with proper handling of edge cases
+        df['bb_middle'] = df['close'].rolling(window=20, min_periods=1).mean()
+        bb_std = df['close'].rolling(window=20, min_periods=1).std()
+        df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
+        df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+        
+        # Forward fill NaN values in Bollinger Bands
+        df['bb_middle'] = df['bb_middle'].ffill()
+        df['bb_upper'] = df['bb_upper'].ffill()
+        df['bb_lower'] = df['bb_lower'].ffill()
+        
+        # Validate Bollinger Bands
+        bb_valid = (df['bb_upper'] >= df['bb_middle']) & (df['bb_middle'] >= df['bb_lower'])
+        if not bb_valid.all():
+            logger.info("Bollinger Bands validation: False")
+            logger.warning("Invalid Bollinger Bands detected!")
+            logger.info(df[~bb_valid][['bb_upper', 'bb_middle', 'bb_lower']].head())
+            # Fix invalid bands
+            df['bb_upper'] = df[['bb_upper', 'bb_middle']].max(axis=1)
+            df['bb_lower'] = df[['bb_lower', 'bb_middle']].min(axis=1)
+        
+        # Calculate ATR with proper handling of edge cases
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        df['atr'] = true_range.rolling(window=14, min_periods=1).mean()
+        df['atr'] = df['atr'].replace([np.inf, -np.inf], np.nan)
+        df['atr'] = df['atr'].ffill().bfill()
+        
+        # Calculate OBV with proper handling of edge cases
+        df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        df['obv'] = df['obv'].replace([np.inf, -np.inf], np.nan)
+        df['obv'] = df['obv'].ffill().bfill()
+        
+        # Calculate ADX with proper handling of edge cases
+        # Calculate True Range
+        high_low = df['high'] - df['low']
+        high_close = np.abs(df['high'] - df['close'].shift())
+        low_close = np.abs(df['low'] - df['close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        
+        # Calculate +DM and -DM
+        high_diff = df['high'] - df['high'].shift(1)
+        low_diff = df['low'].shift(1) - df['low']
+        
+        # Initialize +DM and -DM
+        plus_dm = pd.Series(0.0, index=df.index)
+        minus_dm = pd.Series(0.0, index=df.index)
+        
+        # Calculate +DM and -DM
+        plus_dm = np.where(
+            (high_diff > low_diff) & (high_diff > 0),
+            high_diff,
+            0
+        )
+        minus_dm = np.where(
+            (low_diff > high_diff) & (low_diff > 0),
+            low_diff,
+            0
+        )
+        
+        # Calculate smoothed TR, +DM, and -DM using Wilder's method
+        tr14 = true_range.rolling(window=14, min_periods=1).mean()
+        plus_dm14 = pd.Series(plus_dm).rolling(window=14, min_periods=1).mean()
+        minus_dm14 = pd.Series(minus_dm).rolling(window=14, min_periods=1).mean()
+        
+        # Forward fill NaN values
+        tr14 = tr14.ffill()
+        plus_dm14 = plus_dm14.ffill()
+        minus_dm14 = minus_dm14.ffill()
+        
+        # Calculate DI+ and DI- with a small constant to avoid division by zero
+        epsilon = 1e-8
+        di_plus = 100 * (plus_dm14 / (tr14 + epsilon))
+        di_minus = 100 * (minus_dm14 / (tr14 + epsilon))
+        
+        # Calculate DX and ADX
+        dx = 100 * np.abs(di_plus - di_minus) / (di_plus + di_minus + epsilon)
+        df['adx'] = dx.rolling(window=14, min_periods=1).mean()
+        
+        # Forward fill NaN values in ADX
+        df['adx'] = df['adx'].ffill()
+        
+        # Validate ADX values
+        adx_valid = (df['adx'] >= 0) & (df['adx'] <= 100)
+        if not adx_valid.all():
+            logger.info("ADX validation: False")
+            logger.warning("Invalid ADX values detected!")
+            logger.info(df[~adx_valid]['adx'].head())
+            # Clip ADX values to valid range
+            df['adx'] = df['adx'].clip(0, 100)
+        
+        # Log statistics for each indicator
+        logger.info("Final technical indicator statistics:")
+        for col in ['returns', 'volatility', 'rsi', 'macd', 'atr', 'adx']:
+            stats = df[col].describe()
+            logger.info(f"  {col}:")
+            logger.info(f"    - Mean: {stats['mean']:.4f}")
+            logger.info(f"    - Std: {stats['std']:.4f}")
+            logger.info(f"    - Min: {stats['min']:.4f}")
+            logger.info(f"    - Max: {stats['max']:.4f}")
+        
+        # Log sample values
+        logger.info("Sample of technical indicators:")
+        for col in ['returns', 'volatility', 'rsi', 'macd', 'atr', 'adx']:
+            logger.info(f"  {col}: {df[col].head().values}")
+        
+        return df
 
     def load_ticker_data(self, ticker: str) -> pd.DataFrame:
         """Load and enhance data for a single ticker with feature masking"""
