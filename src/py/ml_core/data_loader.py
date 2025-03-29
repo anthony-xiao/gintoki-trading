@@ -113,15 +113,51 @@ class EnhancedDataLoader:
             # Use mid_price as close price if available, otherwise use close
             price_col = 'mid_price' if 'mid_price' in df.columns else 'close'
             
+            # Validate price data
+            logger.info("Validating price data...")
+            df['high'] = df[['high', price_col]].max(axis=1)
+            df['low'] = df[['low', price_col]].min(axis=1)
+            
+            # Log price validation results
+            high_low_valid = (df['high'] >= df['low']).all()
+            close_in_range = ((df[price_col] >= df['low']) & (df[price_col] <= df['high'])).all()
+            logger.info(f"Price validation results:")
+            logger.info(f"  High >= Low: {high_low_valid}")
+            logger.info(f"  Close between High/Low: {close_in_range}")
+            
+            if not high_low_valid or not close_in_range:
+                logger.warning("Price data validation failed!")
+                logger.info("Sample of invalid prices:")
+                invalid_mask = ~((df['high'] >= df['low']) & (df[price_col] >= df['low']) & (df[price_col] <= df['high']))
+                logger.info(df[invalid_mask][['high', 'low', price_col]].head())
+            
             # Ensure prices are valid
             if df[price_col].isna().any() or (df[price_col] == 0).any():
                 logger.warning(f"Invalid {price_col} prices detected, filling with forward/backward fill")
                 df[price_col] = df[price_col].replace(0, np.nan).ffill().bfill()
             
+            # Log price statistics
+            logger.info("Price statistics:")
+            for col in ['high', 'low', price_col]:
+                stats = df[col].describe()
+                logger.info(f"  {col}:")
+                logger.info(f"    - Mean: {stats['mean']:.4f}")
+                logger.info(f"    - Std: {stats['std']:.4f}")
+                logger.info(f"    - Min: {stats['min']:.4f}")
+                logger.info(f"    - Max: {stats['max']:.4f}")
+            
             # Calculate returns with proper handling of edge cases
             df['returns'] = df[price_col].pct_change()
             df['returns'] = df['returns'].replace([np.inf, -np.inf], np.nan)
             df['returns'] = df['returns'].ffill().bfill()
+            
+            # Log returns statistics
+            logger.info("Returns statistics:")
+            stats = df['returns'].describe()
+            logger.info(f"  Mean: {stats['mean']:.4f}")
+            logger.info(f"  Std: {stats['std']:.4f}")
+            logger.info(f"  Min: {stats['min']:.4f}")
+            logger.info(f"  Max: {stats['max']:.4f}")
             
             # Calculate volatility with proper window
             df['volatility'] = df['returns'].rolling(window=20, min_periods=1).std()
@@ -137,6 +173,13 @@ class EnhancedDataLoader:
             df['rsi'] = df['rsi'].replace([np.inf, -np.inf], np.nan)
             df['rsi'] = df['rsi'].ffill().bfill()
             
+            # Validate RSI range
+            rsi_valid = ((df['rsi'] >= 0) & (df['rsi'] <= 100)).all()
+            logger.info(f"RSI validation: {rsi_valid}")
+            if not rsi_valid:
+                logger.warning("Invalid RSI values detected!")
+                logger.info(df[~((df['rsi'] >= 0) & (df['rsi'] <= 100))]['rsi'].head())
+            
             # Calculate MACD with proper handling of edge cases
             exp1 = df[price_col].ewm(span=12, adjust=False, min_periods=1).mean()
             exp2 = df[price_col].ewm(span=26, adjust=False, min_periods=1).mean()
@@ -144,11 +187,28 @@ class EnhancedDataLoader:
             df['macd_signal'] = df['macd'].ewm(span=9, adjust=False, min_periods=1).mean()
             df['macd_hist'] = df['macd'] - df['macd_signal']
             
+            # Log MACD statistics
+            logger.info("MACD statistics:")
+            for col in ['macd', 'macd_signal', 'macd_hist']:
+                stats = df[col].describe()
+                logger.info(f"  {col}:")
+                logger.info(f"    - Mean: {stats['mean']:.4f}")
+                logger.info(f"    - Std: {stats['std']:.4f}")
+                logger.info(f"    - Min: {stats['min']:.4f}")
+                logger.info(f"    - Max: {stats['max']:.4f}")
+            
             # Calculate Bollinger Bands with proper handling of edge cases
             df['bb_middle'] = df[price_col].rolling(window=20, min_periods=1).mean()
             bb_std = df[price_col].rolling(window=20, min_periods=1).std()
             df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
             df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+            
+            # Validate Bollinger Bands
+            bb_valid = (df['bb_upper'] >= df['bb_middle']).all() and (df['bb_middle'] >= df['bb_lower']).all()
+            logger.info(f"Bollinger Bands validation: {bb_valid}")
+            if not bb_valid:
+                logger.warning("Invalid Bollinger Bands detected!")
+                logger.info(df[~(df['bb_upper'] >= df['bb_middle'])][['bb_upper', 'bb_middle', 'bb_lower']].head())
             
             # Calculate ATR with proper handling of edge cases
             high_low = df['high'] - df['low']
@@ -158,8 +218,24 @@ class EnhancedDataLoader:
             true_range = np.max(ranges, axis=1)
             df['atr'] = true_range.rolling(14, min_periods=1).mean()
             
+            # Log ATR statistics
+            logger.info("ATR statistics:")
+            stats = df['atr'].describe()
+            logger.info(f"  Mean: {stats['mean']:.4f}")
+            logger.info(f"  Std: {stats['std']:.4f}")
+            logger.info(f"  Min: {stats['min']:.4f}")
+            logger.info(f"  Max: {stats['max']:.4f}")
+            
             # Calculate OBV with proper handling of edge cases
             df['obv'] = (np.sign(df[price_col].diff()) * df['volume']).fillna(0).cumsum()
+            
+            # Log OBV statistics
+            logger.info("OBV statistics:")
+            stats = df['obv'].describe()
+            logger.info(f"  Mean: {stats['mean']:.4f}")
+            logger.info(f"  Std: {stats['std']:.4f}")
+            logger.info(f"  Min: {stats['min']:.4f}")
+            logger.info(f"  Max: {stats['max']:.4f}")
             
             # Calculate ADX and DI with proper handling of edge cases
             # First calculate True Range using bid/ask prices
@@ -202,6 +278,11 @@ class EnhancedDataLoader:
             plus_dm = pd.Series(plus_dm, index=df.index)
             minus_dm = pd.Series(minus_dm, index=df.index)
             
+            # Log DM statistics
+            logger.info("Directional Movement statistics:")
+            logger.info(f"  +DM - Mean: {plus_dm.mean():.4f}, Std: {plus_dm.std():.4f}")
+            logger.info(f"  -DM - Mean: {minus_dm.mean():.4f}, Std: {minus_dm.std():.4f}")
+            
             # Calculate smoothed TR, +DM, and -DM using Wilder's smoothing method
             # First period uses simple average
             tr14 = pd.Series(index=df.index)
@@ -234,6 +315,11 @@ class EnhancedDataLoader:
             plus_di14 = plus_di14.ffill()
             minus_di14 = minus_di14.ffill()
             
+            # Log DI statistics
+            logger.info("Directional Indicator statistics:")
+            logger.info(f"  DI+ - Mean: {plus_di14.mean():.4f}, Std: {plus_di14.std():.4f}")
+            logger.info(f"  DI- - Mean: {minus_di14.mean():.4f}, Std: {minus_di14.std():.4f}")
+            
             # Calculate DX with proper handling of edge cases
             # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
             # Add a small constant to avoid division by zero
@@ -255,6 +341,13 @@ class EnhancedDataLoader:
             # Store ADX in the dataframe
             df['adx'] = adx
             
+            # Validate ADX range
+            adx_valid = ((df['adx'] >= 0) & (df['adx'] <= 100)).all()
+            logger.info(f"ADX validation: {adx_valid}")
+            if not adx_valid:
+                logger.warning("Invalid ADX values detected!")
+                logger.info(df[~((df['adx'] >= 0) & (df['adx'] <= 100))]['adx'].head())
+            
             # Forward fill any remaining NaN values
             df = df.ffill()
             
@@ -268,8 +361,8 @@ class EnhancedDataLoader:
                 # Fill any remaining NaNs with 0
                 df = df.fillna(0)
             
-            # Log statistics of calculated indicators
-            logger.info("Technical indicator statistics:")
+            # Log final statistics
+            logger.info("Final technical indicator statistics:")
             for col in ['returns', 'volatility', 'rsi', 'macd', 'atr', 'adx']:
                 if col in df.columns:
                     stats = df[col].describe()
@@ -278,37 +371,6 @@ class EnhancedDataLoader:
                     logger.info(f"    - Std: {stats['std']:.4f}")
                     logger.info(f"    - Min: {stats['min']:.4f}")
                     logger.info(f"    - Max: {stats['max']:.4f}")
-            
-            # Log sample of ADX calculation components (after smoothing period)
-            logger.info("ADX calculation components (after smoothing):")
-            logger.info(f"  True Range - Mean: {tr14.iloc[14:].mean():.4f}, Std: {tr14.iloc[14:].std():.4f}")
-            logger.info(f"  +DM - Mean: {plus_dm14.iloc[14:].mean():.4f}, Std: {plus_dm14.iloc[14:].std():.4f}")
-            logger.info(f"  -DM - Mean: {minus_dm14.iloc[14:].mean():.4f}, Std: {minus_dm14.iloc[14:].std():.4f}")
-            logger.info(f"  DI+ - Mean: {plus_di14.iloc[14:].mean():.4f}, Std: {plus_di14.iloc[14:].std():.4f}")
-            logger.info(f"  DI- - Mean: {minus_di14.iloc[14:].mean():.4f}, Std: {minus_di14.iloc[14:].std():.4f}")
-            logger.info(f"  DX - Mean: {dx.iloc[14:].mean():.4f}, Std: {dx.iloc[14:].std():.4f}")
-            logger.info(f"  ADX - Mean: {df['adx'].iloc[14:].mean():.4f}, Std: {df['adx'].iloc[14:].std():.4f}")
-            
-            # Log sample values for debugging (after smoothing period)
-            logger.info("Sample values (after smoothing):")
-            logger.info(f"  High diff: {high_diff.iloc[14:19].values}")
-            logger.info(f"  Low diff: {low_diff.iloc[14:19].values}")
-            logger.info(f"  +DM: {plus_dm.iloc[14:19].values}")
-            logger.info(f"  -DM: {minus_dm.iloc[14:19].values}")
-            logger.info(f"  TR: {true_range.iloc[14:19].values}")
-            logger.info(f"  TR14: {tr14.iloc[14:19].values}")
-            logger.info(f"  +DM14: {plus_dm14.iloc[14:19].values}")
-            logger.info(f"  -DM14: {minus_dm14.iloc[14:19].values}")
-            logger.info(f"  DI+: {plus_di14.iloc[14:19].values}")
-            logger.info(f"  DI-: {minus_di14.iloc[14:19].values}")
-            logger.info(f"  DX: {dx.iloc[14:19].values}")
-            logger.info(f"  ADX: {df['adx'].iloc[14:19].values}")
-            
-            # Log raw price data for debugging
-            logger.info("Raw price data:")
-            logger.info(f"  High: {df['high'].iloc[14:19].values}")
-            logger.info(f"  Low: {df['low'].iloc[14:19].values}")
-            logger.info(f"  Close: {df[price_col].iloc[14:19].values}")
             
             return df
             
@@ -642,12 +704,26 @@ class EnhancedDataLoader:
             # Resample to 1-minute bars
             quotes.set_index('timestamp', inplace=True)
             
+            # Log initial quote statistics
+            logger.info("Initial quote statistics:")
+            for col in ['bid_price', 'ask_price', 'bid_size', 'ask_size']:
+                stats = quotes[col].describe()
+                logger.info(f"  {col}:")
+                logger.info(f"    - Mean: {stats['mean']:.4f}")
+                logger.info(f"    - Std: {stats['std']:.4f}")
+                logger.info(f"    - Min: {stats['min']:.4f}")
+                logger.info(f"    - Max: {stats['max']:.4f}")
+            
             # Filter out zero or invalid prices
             valid_quotes = quotes[
                 (quotes['bid_price'] > 0) & 
                 (quotes['ask_price'] > 0) & 
                 (quotes['bid_price'] < quotes['ask_price'])
             ]
+            
+            # Log filtering results
+            filtered_count = len(quotes) - len(valid_quotes)
+            logger.info(f"Filtered out {filtered_count} invalid quotes ({filtered_count/len(quotes)*100:.2f}%)")
             
             if len(valid_quotes) == 0:
                 logger.warning("No valid quotes found after filtering")
@@ -667,17 +743,39 @@ class EnhancedDataLoader:
                 mid_price=lambda x: (x['ask_price'] + x['bid_price']) / 2
             ).dropna()
             
+            # Filter extreme spreads (more than 2% of mid price)
+            max_spread = quotes_processed['mid_price'] * 0.02
+            valid_spreads = quotes_processed['bid_ask_spread'] <= max_spread
+            filtered_spreads = ~valid_spreads
+            
+            if filtered_spreads.any():
+                logger.warning(f"Filtered {filtered_spreads.sum()} quotes with extreme spreads")
+                logger.info("Sample of filtered spreads:")
+                logger.info(quotes_processed[filtered_spreads][['bid_price', 'ask_price', 'bid_ask_spread', 'mid_price']].head())
+            
+            quotes_processed = quotes_processed[valid_spreads]
+            
             # Forward fill any missing values
             quotes_processed = quotes_processed.ffill()
             
-            # Log sample of processed quotes
-            logger.info("Sample of processed quotes:")
-            logger.info(f"Shape: {quotes_processed.shape}")
-            logger.info(f"Columns: {quotes_processed.columns.tolist()}")
-            logger.info(f"First 5 rows of bid/ask prices:")
-            logger.info(f"  bid_price: {quotes_processed['bid_price'].head().values}")
-            logger.info(f"  ask_price: {quotes_processed['ask_price'].head().values}")
-            logger.info(f"  spread: {quotes_processed['bid_ask_spread'].head().values}")
+            # Log final quote statistics
+            logger.info("Final quote statistics:")
+            for col in ['bid_price', 'ask_price', 'bid_size', 'ask_size', 'bid_ask_spread', 'mid_price']:
+                stats = quotes_processed[col].describe()
+                logger.info(f"  {col}:")
+                logger.info(f"    - Mean: {stats['mean']:.4f}")
+                logger.info(f"    - Std: {stats['std']:.4f}")
+                logger.info(f"    - Min: {stats['min']:.4f}")
+                logger.info(f"    - Max: {stats['max']:.4f}")
+            
+            # Log spread ratio statistics
+            spread_ratio = quotes_processed['bid_ask_spread'] / quotes_processed['mid_price']
+            logger.info("Spread ratio statistics:")
+            stats = spread_ratio.describe()
+            logger.info(f"  Mean: {stats['mean']:.4f}")
+            logger.info(f"  Std: {stats['std']:.4f}")
+            logger.info(f"  Min: {stats['min']:.4f}")
+            logger.info(f"  Max: {stats['max']:.4f}")
             
             logger.info(f"✅ Processed {len(quotes_processed)} quote bars")
             return quotes_processed
