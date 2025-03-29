@@ -24,7 +24,7 @@ def run_testing(config: Dict):
         # Load historical data
         data_loader = EnhancedDataLoader()
         # symbols = config.get('test_symbols', ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'META'])
-        symbols = config.get('test_symbols', ['OKLO'])
+        symbols = config.get('test_symbols', ['BTDR'])
         
         # Get data from 2023 to 2025
         end_date = datetime.now()
@@ -94,7 +94,7 @@ def run_testing(config: Dict):
 if __name__ == "__main__":
     # Example configuration
     config = {
-        'test_symbols': ['OKLO'],
+        'test_symbols': ['BTDR'],
         'train_window': 252 * 390,    # 1 year of trading minutes (252 days * 390 minutes)
         'val_window': 63 * 390,       # 3 months of trading minutes
         'test_window': 63 * 390,      # 3 months of trading minutes
