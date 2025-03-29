@@ -162,17 +162,17 @@ class EnhancedDataLoader:
             df['obv'] = (np.sign(df[price_col].diff()) * df['volume']).fillna(0).cumsum()
             
             # Calculate ADX and DI with proper handling of edge cases
-            # First calculate True Range using high/low/close prices
-            high_low = df['high'] - df['low']
-            high_close = np.abs(df['high'] - df[price_col].shift())
-            low_close = np.abs(df['low'] - df[price_col].shift())
+            # First calculate True Range using bid/ask prices
+            high_low = df['ask_price'] - df['bid_price']  # Use bid/ask spread
+            high_close = np.abs(df['ask_price'] - df['bid_price'].shift())
+            low_close = np.abs(df['bid_price'] - df['ask_price'].shift())
             ranges = pd.concat([high_low, high_close, low_close], axis=1)
             true_range = np.max(ranges, axis=1)
             
             # Calculate +DM and -DM with proper price movement detection
-            # Calculate high and low differences
-            high_diff = df['high'] - df['high'].shift(1)  # Current high - previous high
-            low_diff = df['low'].shift(1) - df['low']  # Previous low - current low
+            # Calculate high and low differences using bid/ask prices
+            high_diff = df['ask_price'] - df['ask_price'].shift(1)  # Current ask - previous ask
+            low_diff = df['bid_price'].shift(1) - df['bid_price']  # Previous bid - current bid
             
             # Fill NaN values with 0 for the first row
             high_diff = high_diff.fillna(0)
@@ -183,6 +183,8 @@ class EnhancedDataLoader:
             minus_dm = pd.Series(0.0, index=df.index)
             
             # Calculate +DM and -DM according to Wilder's method
+            # +DM is the current ask minus the previous ask
+            # -DM is the previous bid minus the current bid
             # Only count the larger of the two movements if they're in opposite directions
             plus_dm = np.where(
                 (high_diff > low_diff) & (high_diff > 0),
@@ -232,10 +234,6 @@ class EnhancedDataLoader:
             plus_di14 = plus_di14.ffill()
             minus_di14 = minus_di14.ffill()
             
-            # Calculate DI+ and DI-
-            df['di_plus'] = plus_di14
-            df['di_minus'] = minus_di14
-            
             # Calculate DX with proper handling of edge cases
             # Use the standard formula: DX = 100 * |DI+ - DI-| / (DI+ + DI-)
             # Add a small constant to avoid division by zero
@@ -248,7 +246,8 @@ class EnhancedDataLoader:
             
             # Subsequent periods use Wilder's smoothing method
             for i in range(14, len(df)):
-                adx.iloc[i] = adx.iloc[i-1] - (adx.iloc[i-1] / 14) + dx.iloc[i]
+                # Wilder's smoothing formula: ADX = ((prior ADX * 13) + current DX) / 14
+                adx.iloc[i] = ((adx.iloc[i-1] * 13) + dx.iloc[i]) / 14
             
             # Forward fill any NaN values at the start
             adx = adx.ffill()
