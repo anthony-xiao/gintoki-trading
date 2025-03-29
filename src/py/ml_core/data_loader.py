@@ -298,30 +298,58 @@ class EnhancedDataLoader:
             logger.info(f"  High diff: {high_diff[sample_idx]:.4f}")
             logger.info(f"  Low diff: {low_diff[sample_idx]:.4f}")
             
-            # Calculate +DM and -DM
-            plus_dm = pd.Series(0.0, index=df.index)
-            minus_dm = pd.Series(0.0, index=df.index)
+            # Calculate +DM and -DM according to Wilder's method
+            # +DM is the current ask minus the previous ask
+            # -DM is the previous bid minus the current bid
+            # Only count the larger of the two movements if they're in opposite directions
+            plus_dm = np.where(
+                (high_diff > low_diff) & (high_diff > 0),
+                high_diff,
+                0
+            )
             
-            # Calculate True Range
-            tr1 = df['high'] - df['low']
-            tr2 = abs(df['high'] - df['close'].shift(1))
-            tr3 = abs(df['low'] - df['close'].shift(1))
-            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            minus_dm = np.where(
+                (low_diff > high_diff) & (low_diff > 0),
+                low_diff,
+                0
+            )
             
-            # Log True Range components
-            logger.info("\nTrue Range components:")
-            logger.info(f"Sample of TR calculations:")
-            sample_idx = df.index[0]
-            logger.info(f"  TR1 (High-Low): {tr1[sample_idx]:.4f}")
-            logger.info(f"  TR2 (High-PrevClose): {tr2[sample_idx]:.4f}")
-            logger.info(f"  TR3 (Low-PrevClose): {tr3[sample_idx]:.4f}")
-            logger.info(f"  Final TR: {tr[sample_idx]:.4f}")
+            # Convert to Series
+            plus_dm = pd.Series(plus_dm, index=df.index)
+            minus_dm = pd.Series(minus_dm, index=df.index)
             
-            # Calculate smoothed values using Wilder's method
-            period = 14
-            tr14 = tr.rolling(window=period).mean()
-            plus_dm14 = plus_dm.rolling(window=period).mean()
-            minus_dm14 = minus_dm.rolling(window=period).mean()
+            # Log DM statistics
+            logger.info("Directional Movement statistics:")
+            logger.info(f"  +DM - Mean: {plus_dm.mean():.4f}, Std: {plus_dm.std():.4f}")
+            logger.info(f"  -DM - Mean: {minus_dm.mean():.4f}, Std: {minus_dm.std():.4f}")
+            
+            # Calculate smoothed TR, +DM, and -DM using Wilder's smoothing method
+            # First period uses simple average
+            tr14 = pd.Series(index=df.index)
+            plus_dm14 = pd.Series(index=df.index)
+            minus_dm14 = pd.Series(index=df.index)
+            
+            # First period uses simple average
+            tr14.iloc[13] = true_range.iloc[:14].mean()
+            plus_dm14.iloc[13] = plus_dm.iloc[:14].mean()
+            minus_dm14.iloc[13] = minus_dm.iloc[:14].mean()
+            
+            # Log first period calculations
+            logger.info("\nFirst period calculations:")
+            logger.info(f"  TR14 first value: {tr14.iloc[13]:.4f}")
+            logger.info(f"  +DM14 first value: {plus_dm14.iloc[13]:.4f}")
+            logger.info(f"  -DM14 first value: {minus_dm14.iloc[13]:.4f}")
+            
+            # Subsequent periods use Wilder's smoothing method
+            for i in range(14, len(df)):
+                tr14.iloc[i] = tr14.iloc[i-1] - (tr14.iloc[i-1] / 14) + true_range.iloc[i]
+                plus_dm14.iloc[i] = plus_dm14.iloc[i-1] - (plus_dm14.iloc[i-1] / 14) + plus_dm.iloc[i]
+                minus_dm14.iloc[i] = minus_dm14.iloc[i-1] - (minus_dm14.iloc[i-1] / 14) + minus_dm.iloc[i]
+            
+            # Forward fill any NaN values at the start
+            tr14 = tr14.ffill()
+            plus_dm14 = plus_dm14.ffill()
+            minus_dm14 = minus_dm14.ffill()
             
             # Log smoothed values
             logger.info("\nSmoothed values:")
