@@ -201,34 +201,36 @@ class EnhancedDataLoader:
             bb_period = 20
             bb_std = 2.0
             
-            # Initialize with first value to avoid NaN
-            df['bb_middle'] = df['close'].iloc[0]
-            df['bb_std'] = 0.0
-            df['bb_upper'] = df['bb_middle']
-            df['bb_lower'] = df['bb_middle']
+            # Use mid_price if available, otherwise use close
+            price_col = 'mid_price' if 'mid_price' in df.columns else 'close'
             
             # Calculate rolling mean and std with proper window
-            rolling_mean = df['close'].rolling(window=bb_period, min_periods=1).mean()
-            rolling_std = df['close'].rolling(window=bb_period, min_periods=1).std()
+            df['bb_middle'] = df[price_col].rolling(window=bb_period, min_periods=1).mean()
+            df['bb_std'] = df[price_col].rolling(window=bb_period, min_periods=1).std()
             
-            # Update values after initialization
-            df.loc[1:, 'bb_middle'] = rolling_mean[1:]
-            df.loc[1:, 'bb_std'] = rolling_std[1:]
-            df.loc[1:, 'bb_upper'] = df.loc[1:, 'bb_middle'] + (bb_std * df.loc[1:, 'bb_std'])
-            df.loc[1:, 'bb_lower'] = df.loc[1:, 'bb_middle'] - (bb_std * df.loc[1:, 'bb_std'])
+            # Calculate upper and lower bands
+            df['bb_upper'] = df['bb_middle'] + (bb_std * df['bb_std'])
+            df['bb_lower'] = df['bb_middle'] - (bb_std * df['bb_std'])
+            
+            # Forward fill NaN values at the start
+            df['bb_middle'] = df['bb_middle'].ffill()
+            df['bb_std'] = df['bb_std'].ffill()
+            df['bb_upper'] = df['bb_upper'].ffill()
+            df['bb_lower'] = df['bb_lower'].ffill()
             
             # Log Bollinger Bands calculations
             logger.info("\nBollinger Bands calculation details:")
-            logger.info(f"Close price statistics:")
-            logger.info(f"  Mean: {df['close'].mean():.4f}")
-            logger.info(f"  Std: {df['close'].std():.4f}")
+            logger.info(f"Price column used: {price_col}")
+            logger.info(f"Price statistics:")
+            logger.info(f"  Mean: {df[price_col].mean():.4f}")
+            logger.info(f"  Std: {df[price_col].std():.4f}")
             logger.info(f"  Rolling window: {bb_period}")
             
             # Get sample index after the rolling window
             sample_idx = bb_period + 1
             
             logger.info(f"Sample of BB calculations:")
-            logger.info(f"  Close: {df['close'].iloc[sample_idx]:.4f}")
+            logger.info(f"  Price: {df[price_col].iloc[sample_idx]:.4f}")
             logger.info(f"  BB Middle: {df['bb_middle'].iloc[sample_idx]:.6f}")
             logger.info(f"  BB Std: {df['bb_std'].iloc[sample_idx]:.6f}")
             logger.info(f"  BB Upper: {df['bb_upper'].iloc[sample_idx]:.6f}")
@@ -238,11 +240,12 @@ class EnhancedDataLoader:
             bb_valid = df['bb_middle'].notna().all() and df['bb_std'].notna().all() and \
                       df['bb_upper'].notna().all() and df['bb_lower'].notna().all() and \
                       (df['bb_upper'] >= df['bb_middle']).all() and \
-                      (df['bb_middle'] >= df['bb_lower']).all()
+                      (df['bb_middle'] >= df['bb_lower']).all() and \
+                      (df['bb_std'] > 0).all()
             logger.info(f"Bollinger Bands validation: {bb_valid}")
             if not bb_valid:
                 logger.warning("Invalid Bollinger Bands detected!")
-                logger.info(df[['bb_upper', 'bb_middle', 'bb_lower']].head())
+                logger.info(df[['bb_upper', 'bb_middle', 'bb_lower', 'bb_std']].head())
             
             # Calculate ATR with proper handling of edge cases
             high_low = df['high'] - df['low']
@@ -280,7 +283,6 @@ class EnhancedDataLoader:
             true_range = np.max(ranges, axis=1)
             
             # Calculate +DM and -DM with proper price movement detection
-            # Calculate high and low differences using bid/ask prices
             high_diff = df['ask_price'] - df['ask_price'].shift(1)  # Current ask - previous ask
             low_diff = df['bid_price'].shift(1) - df['bid_price']  # Previous bid - current bid
             
@@ -288,34 +290,7 @@ class EnhancedDataLoader:
             high_diff = high_diff.fillna(0)
             low_diff = low_diff.fillna(0)
             
-            # Log True Range calculation details
-            logger.info("\nTrue Range calculation details:")
-            logger.info(f"High price statistics:")
-            logger.info(f"  Mean: {df['high'].mean():.4f}")
-            logger.info(f"  Std: {df['high'].std():.4f}")
-            logger.info(f"Low price statistics:")
-            logger.info(f"  Mean: {df['low'].mean():.4f}")
-            logger.info(f"  Std: {df['low'].std():.4f}")
-            logger.info(f"Sample of price differences:")
-            sample_idx = df.index[0]
-            logger.info(f"  High diff: {high_diff[sample_idx]:.4f}")
-            logger.info(f"  Low diff: {low_diff[sample_idx]:.4f}")
-            
-            # Calculate +DM and -DM
-            plus_dm = pd.Series(0.0, index=df.index)
-            minus_dm = pd.Series(0.0, index=df.index)
-            
-            # Log DM calculation details
-            logger.info("\nDirectional Movement calculation details:")
-            logger.info(f"Sample of price movements:")
-            sample_idx = df.index[0]
-            logger.info(f"  High diff: {high_diff[sample_idx]:.4f}")
-            logger.info(f"  Low diff: {low_diff[sample_idx]:.4f}")
-            
             # Calculate +DM and -DM according to Wilder's method
-            # +DM is the current ask minus the previous ask
-            # -DM is the previous bid minus the current bid
-            # Only count the larger of the two movements if they're in opposite directions
             plus_dm = np.where(
                 (high_diff > low_diff) & (high_diff > 0),
                 high_diff,
@@ -332,90 +307,57 @@ class EnhancedDataLoader:
             plus_dm = pd.Series(plus_dm, index=df.index)
             minus_dm = pd.Series(minus_dm, index=df.index)
             
-            # Log DM statistics
-            logger.info("Directional Movement statistics:")
-            logger.info(f"  +DM - Mean: {plus_dm.mean():.4f}, Std: {plus_dm.std():.4f}")
-            logger.info(f"  -DM - Mean: {minus_dm.mean():.4f}, Std: {minus_dm.std():.4f}")
-            
             # Calculate smoothed TR, +DM, and -DM using Wilder's smoothing method
-            # First period uses simple average
             tr14 = pd.Series(index=df.index)
             plus_dm14 = pd.Series(index=df.index)
             minus_dm14 = pd.Series(index=df.index)
             
-            # First period uses simple average
-            tr14.iloc[13] = true_range.iloc[:14].mean()
-            plus_dm14.iloc[13] = plus_dm.iloc[:14].mean()
-            minus_dm14.iloc[13] = minus_dm.iloc[:14].mean()
-            
-            # Log first period calculations
-            logger.info("\nFirst period calculations:")
-            logger.info(f"  TR14 first value: {tr14.iloc[13]:.4f}")
-            logger.info(f"  +DM14 first value: {plus_dm14.iloc[13]:.4f}")
-            logger.info(f"  -DM14 first value: {minus_dm14.iloc[13]:.4f}")
+            # Initialize first 14 periods with progressive averages
+            for i in range(14):
+                if i < 14:
+                    tr14.iloc[i] = true_range.iloc[0:i+1].mean()
+                    plus_dm14.iloc[i] = plus_dm.iloc[0:i+1].mean()
+                    minus_dm14.iloc[i] = minus_dm.iloc[0:i+1].mean()
+                else:
+                    tr14.iloc[i] = true_range.iloc[0:14].mean()
+                    plus_dm14.iloc[i] = plus_dm.iloc[0:14].mean()
+                    minus_dm14.iloc[i] = minus_dm.iloc[0:14].mean()
             
             # Subsequent periods use Wilder's smoothing method
             for i in range(14, len(df)):
-                tr14.iloc[i] = tr14.iloc[i-1] - (tr14.iloc[i-1] / 14) + true_range.iloc[i]
-                plus_dm14.iloc[i] = plus_dm14.iloc[i-1] - (plus_dm14.iloc[i-1] / 14) + plus_dm.iloc[i]
-                minus_dm14.iloc[i] = minus_dm14.iloc[i-1] - (minus_dm14.iloc[i-1] / 14) + minus_dm.iloc[i]
+                tr14.iloc[i] = (tr14.iloc[i-1] * 13 + true_range.iloc[i]) / 14
+                plus_dm14.iloc[i] = (plus_dm14.iloc[i-1] * 13 + plus_dm.iloc[i]) / 14
+                minus_dm14.iloc[i] = (minus_dm14.iloc[i-1] * 13 + minus_dm.iloc[i]) / 14
             
-            # Forward fill any NaN values at the start
+            # Forward fill any NaN values
             tr14 = tr14.ffill()
             plus_dm14 = plus_dm14.ffill()
             minus_dm14 = minus_dm14.ffill()
-            
-            # Log smoothed values
-            logger.info("\nSmoothed values:")
-            logger.info(f"Sample of smoothed calculations:")
-            sample_idx = df.index[13]  # Use first complete period (index 13 for 14-period)
-            logger.info(f"  TR14: {tr14[sample_idx]:.4f}")
-            logger.info(f"  +DM14: {plus_dm14[sample_idx]:.4f}")
-            logger.info(f"  -DM14: {minus_dm14[sample_idx]:.4f}")
             
             # Calculate DI+ and DI-
             epsilon = 1e-8  # Small constant to avoid division by zero
             di_plus = 100 * (plus_dm14 / (tr14 + epsilon))
             di_minus = 100 * (minus_dm14 / (tr14 + epsilon))
             
-            # Log DI calculations
-            logger.info("\nDirectional Indicators calculation:")
-            logger.info(f"Sample of DI calculations:")
-            logger.info(f"  DI+: {di_plus[sample_idx]:.4f}")
-            logger.info(f"  DI-: {di_minus[sample_idx]:.4f}")
-            
             # Calculate DX and ADX
             dx = 100 * abs(di_plus - di_minus) / (di_plus + di_minus + epsilon)
             
             # Calculate ADX using Wilder's smoothing method
-            adx = dx.copy()
+            adx = pd.Series(index=df.index)
             
-            # Initialize first 14 periods with progressive means
+            # Initialize first 14 periods with progressive averages
             for i in range(14):
-                if i == 0:
-                    adx.iloc[i] = dx.iloc[0]
-                else:
+                if i < 14:
                     adx.iloc[i] = dx.iloc[0:i+1].mean()
+                else:
+                    adx.iloc[i] = dx.iloc[0:14].mean()
             
             # Subsequent periods use Wilder's smoothing
             for i in range(14, len(dx)):
                 adx.iloc[i] = (adx.iloc[i-1] * 13 + dx.iloc[i]) / 14
             
-            # Forward fill any remaining NaN values
+            # Forward fill any NaN values
             adx = adx.ffill()
-            
-            # Log DX and ADX calculations
-            logger.info("\nDX and ADX calculations:")
-            logger.info(f"Sample of DX/ADX calculations:")
-            logger.info(f"  DX: {dx[sample_idx]:.4f}")
-            logger.info(f"  ADX: {adx[sample_idx]:.4f}")
-            
-            # Validate ADX
-            adx_valid = adx.notna().all() and (adx >= 0).all() and (adx <= 100).all()
-            logger.info(f"ADX validation: {adx_valid}")
-            if not adx_valid:
-                logger.warning("Invalid ADX values detected!")
-                logger.info(adx.head())
             
             # Store the calculated values in the DataFrame
             df['di_plus'] = di_plus
