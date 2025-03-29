@@ -197,34 +197,34 @@ class EnhancedDataLoader:
                 logger.info(f"    - Min: {stats['min']:.4f}")
                 logger.info(f"    - Max: {stats['max']:.4f}")
             
-            # Calculate Bollinger Bands with proper handling of edge cases
-            df['bb_middle'] = df[price_col].rolling(window=20, min_periods=1).mean()
-            bb_std = df[price_col].rolling(window=20, min_periods=1).std()
-            df['bb_upper'] = df['bb_middle'] + (bb_std * 2)
-            df['bb_lower'] = df['bb_middle'] - (bb_std * 2)
+            # Calculate Bollinger Bands
+            bb_period = 20
+            bb_std = 2.0
+            df['bb_middle'] = df['close'].rolling(window=bb_period).mean()
+            df['bb_std'] = df['close'].rolling(window=bb_period).std()
+            df['bb_upper'] = df['bb_middle'] + (bb_std * df['bb_std'])
+            df['bb_lower'] = df['bb_middle'] - (bb_std * df['bb_std'])
             
-            # Log Bollinger Bands calculation details
+            # Log Bollinger Bands calculations
             logger.info("\nBollinger Bands calculation details:")
             logger.info(f"Close price statistics:")
-            logger.info(f"  Mean: {df[price_col].mean():.4f}")
-            logger.info(f"  Std: {df[price_col].std():.4f}")
-            logger.info(f"  Rolling window: 20")
+            logger.info(f"  Mean: {df['close'].mean():.4f}")
+            logger.info(f"  Std: {df['close'].std():.4f}")
+            logger.info(f"  Rolling window: {bb_period}")
+            
+            # Get sample index after the rolling window
+            sample_idx = bb_period + 1
+            
             logger.info(f"Sample of BB calculations:")
-            sample_idx = df.index[0]
-            logger.info(f"  Close: {df.loc[sample_idx, price_col]:.4f}")
-            logger.info(f"  BB Middle: {df.loc[sample_idx, 'bb_middle']:4f}")
-            logger.info(f"  BB Std: {bb_std[sample_idx]:.4f}")
-            logger.info(f"  BB Upper: {df.loc[sample_idx, 'bb_upper']:4f}")
-            logger.info(f"  BB Lower: {df.loc[sample_idx, 'bb_lower']:4f}")
+            logger.info(f"  Close: {df['close'].iloc[sample_idx]:.4f}")
+            logger.info(f"  BB Middle: {df['bb_middle'].iloc[sample_idx]:.6f}")
+            logger.info(f"  BB Std: {df['bb_std'].iloc[sample_idx]:.6f}")
+            logger.info(f"  BB Upper: {df['bb_upper'].iloc[sample_idx]:.6f}")
+            logger.info(f"  BB Lower: {df['bb_lower'].iloc[sample_idx]:.6f}")
             
             # Validate Bollinger Bands
-            bb_valid = (
-                df['bb_upper'].notna().all() and
-                df['bb_middle'].notna().all() and
-                df['bb_lower'].notna().all() and
-                (df['bb_upper'] > df['bb_middle']).all() and
-                (df['bb_middle'] > df['bb_lower']).all()
-            )
+            bb_valid = df['bb_middle'].notna().all() and df['bb_std'].notna().all() and \
+                      df['bb_upper'].notna().all() and df['bb_lower'].notna().all()
             logger.info(f"Bollinger Bands validation: {bb_valid}")
             if not bb_valid:
                 logger.warning("Invalid Bollinger Bands detected!")
@@ -372,7 +372,14 @@ class EnhancedDataLoader:
             
             # Calculate DX and ADX
             dx = 100 * abs(di_plus - di_minus) / (di_plus + di_minus + epsilon)
-            adx = dx.rolling(window=14).mean()  # Use 14-period window for ADX
+            
+            # Calculate ADX using Wilder's smoothing method
+            adx = dx.copy()
+            # First period is simple average
+            adx.iloc[13] = dx.iloc[0:14].mean()
+            # Subsequent periods use Wilder's smoothing
+            for i in range(14, len(dx)):
+                adx.iloc[i] = (adx.iloc[i-1] * 13 + dx.iloc[i]) / 14
             
             # Log DX and ADX calculations
             logger.info("\nDX and ADX calculations:")
