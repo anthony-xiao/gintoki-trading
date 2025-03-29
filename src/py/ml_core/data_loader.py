@@ -200,10 +200,20 @@ class EnhancedDataLoader:
             # Calculate Bollinger Bands
             bb_period = 20
             bb_std = 2.0
-            df['bb_middle'] = df['close'].rolling(window=bb_period).mean()
-            df['bb_std'] = df['close'].rolling(window=bb_period).std()
+            
+            # Calculate rolling mean and std with proper window
+            df['bb_middle'] = df['close'].rolling(window=bb_period, min_periods=1).mean()
+            df['bb_std'] = df['close'].rolling(window=bb_period, min_periods=1).std()
+            
+            # Calculate upper and lower bands
             df['bb_upper'] = df['bb_middle'] + (bb_std * df['bb_std'])
             df['bb_lower'] = df['bb_middle'] - (bb_std * df['bb_std'])
+            
+            # Forward fill NaN values at the start
+            df['bb_middle'] = df['bb_middle'].ffill()
+            df['bb_std'] = df['bb_std'].ffill()
+            df['bb_upper'] = df['bb_upper'].ffill()
+            df['bb_lower'] = df['bb_lower'].ffill()
             
             # Log Bollinger Bands calculations
             logger.info("\nBollinger Bands calculation details:")
@@ -224,7 +234,9 @@ class EnhancedDataLoader:
             
             # Validate Bollinger Bands
             bb_valid = df['bb_middle'].notna().all() and df['bb_std'].notna().all() and \
-                      df['bb_upper'].notna().all() and df['bb_lower'].notna().all()
+                      df['bb_upper'].notna().all() and df['bb_lower'].notna().all() and \
+                      (df['bb_upper'] >= df['bb_middle']).all() and \
+                      (df['bb_middle'] >= df['bb_lower']).all()
             logger.info(f"Bollinger Bands validation: {bb_valid}")
             if not bb_valid:
                 logger.warning("Invalid Bollinger Bands detected!")
@@ -375,11 +387,20 @@ class EnhancedDataLoader:
             
             # Calculate ADX using Wilder's smoothing method
             adx = dx.copy()
-            # First period is simple average
-            adx.iloc[13] = dx.iloc[0:14].mean()
+            
+            # Initialize first 14 periods with simple average
+            for i in range(14):
+                if i < 14:
+                    adx.iloc[i] = dx.iloc[0:i+1].mean()
+                else:
+                    adx.iloc[i] = dx.iloc[0:14].mean()
+            
             # Subsequent periods use Wilder's smoothing
             for i in range(14, len(dx)):
                 adx.iloc[i] = (adx.iloc[i-1] * 13 + dx.iloc[i]) / 14
+            
+            # Forward fill any remaining NaN values
+            adx = adx.ffill()
             
             # Log DX and ADX calculations
             logger.info("\nDX and ADX calculations:")
