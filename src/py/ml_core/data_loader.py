@@ -21,7 +21,7 @@ class EnhancedDataLoader:
         logger = logging.getLogger("training")
         logger.debug("\U0001F310 Initializing S3 client for bucket %s", bucket)
         
-        # Configure GPU memory growth
+        # Configures GPU memory growth
         gpus = tf.config.list_physical_devices('GPU')
         if gpus:
             try:
